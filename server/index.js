@@ -15,7 +15,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PORT = Number(process.env.PORT ?? 8080)
 const PIXSPELL_DIR = process.env.PIXSPELL_DIR ? resolve(ROOT, process.env.PIXSPELL_DIR) : null
 // pinned so a change in PixSpell never breaks a running game; bump it on purpose
-const PIXSPELL_CDN = process.env.PIXSPELL_URL ?? 'https://cdn.jsdelivr.net/gh/olebangpad/pixspell@822f986/src/index.js'
+const PIXSPELL_CDN = process.env.PIXSPELL_URL ?? 'https://cdn.jsdelivr.net/gh/olebangpad/pixspell@822f986be33bba615f7a671244560edb25143e8d/src/index.js'
 const DATA = process.env.DATA_FILE ?? join(ROOT, 'data', 'players.json')
 
 // ------------------------------------------------------------------ saved characters: one JSON file
