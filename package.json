@@ -1,0 +1,19 @@
+{
+  "name": "dalmuri",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small online RPG in your browser, drawn with PixSpell",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "PIXSPELL_DIR=../dog node server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

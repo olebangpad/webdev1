@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>달무리 온라인</title>
+  <meta name="description" content="브라우저에서 바로 하는 작은 온라인 RPG. 모든 그림과 소리는 PixSpell 코드로 그렸습니다.">
+  <style>
+    @font-face { font-family: 'DungGeunMo'; src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/DungGeunMo.woff') format('woff'); font-display: swap; }
+    :root { --bg: #0c1014; --panel: #161d22; --line: #2a3640; --ink: #eef3e8; --muted: #8fa39a; --gold: #ffd36a; --accent: #9be06a; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.5 'DungGeunMo', system-ui, sans-serif; overflow: hidden; }
+    #frame { position: relative; margin: 0 auto; }
+    canvas#game { display: block; image-rendering: pixelated; background: #000; touch-action: none; }
+    .hidden { display: none !important; }
+
+    /* login */
+    #login { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(ellipse at top, #1d2a2a, var(--bg)); z-index: 10; overflow: auto; padding: 16px; }
+    #login .box { width: min(720px, 100%); background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 20px; }
+    h1 { margin: 0; font-size: 34px; color: var(--gold); letter-spacing: 2px; text-shadow: 0 3px 0 #5a3c10; }
+    .sub { color: var(--muted); margin: 2px 0 16px; }
+    label { display: block; color: var(--muted); margin: 12px 0 6px; }
+    input[type=text] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 2px solid var(--line); background: #0e1418; color: var(--ink); font: inherit; font-size: 16px; }
+    .jobs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .job { border: 2px solid var(--line); border-radius: 10px; background: #10171b; padding: 8px; cursor: pointer; text-align: center; color: var(--ink); font: inherit; }
+    .job canvas { width: 72px; height: 72px; image-rendering: pixelated; }
+    .job b { display: block; font-size: 16px; }
+    .job small { display: block; color: var(--muted); font-size: 11px; line-height: 1.35; min-height: 44px; }
+    .job[aria-pressed=true] { border-color: var(--gold); background: #1f2618; }
+    .colors { display: flex; gap: 8px; flex-wrap: wrap; }
+    .swatch { width: 34px; height: 34px; border-radius: 8px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+    .swatch[aria-pressed=true] { border-color: var(--gold); transform: scale(1.08); }
+    .go { margin-top: 16px; width: 100%; padding: 12px; font: inherit; font-size: 18px; border: 0; border-radius: 10px; background: var(--accent); color: #102010; cursor: pointer; }
+    .go:disabled { opacity: .5; }
+    .err { color: #ff8a7a; min-height: 1.5em; margin-top: 8px; }
+    .foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .foot a { color: var(--accent); }
+    @media (max-width: 560px) { .jobs { grid-template-columns: repeat(2, 1fr); } }
+
+    /* in game */
+    #chat { position: absolute; left: 6px; bottom: 6px; width: min(52%, 420px); pointer-events: none; }
+    #log { max-height: 128px; overflow: hidden; font-size: 13px; line-height: 1.35; text-shadow: 0 1px 0 #000, 1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000; display: flex; flex-direction: column; justify-content: flex-end; }
+    #log .sys { color: var(--gold); }
+    #log .big { color: #ffb2f0; }
+    #log b { color: #b9e3ff; font-weight: normal; }
+    #say { pointer-events: auto; width: 100%; margin-top: 4px; padding: 6px 8px; border-radius: 6px; border: 2px solid var(--line); background: #0e1418ee; color: var(--ink); font: inherit; }
+    #dialog { position: absolute; left: 50%; bottom: 16%; transform: translateX(-50%); width: min(80%, 460px); background: #10171bf0; border: 2px solid var(--gold); border-radius: 10px; padding: 10px 14px; }
+    #dialog b { color: var(--gold); display: block; }
+    #pad { position: absolute; right: 8px; bottom: 8px; display: none; gap: 6px; }
+    #pad button { width: 54px; height: 54px; border-radius: 50%; border: 2px solid var(--line); background: #10171bcc; color: var(--ink); font: inherit; font-size: 15px; }
+    #dpad { position: absolute; left: 8px; bottom: 150px; display: none; grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(3, 46px); gap: 2px; }
+    #dpad button { border-radius: 8px; border: 2px solid var(--line); background: #10171bcc; color: var(--ink); font-size: 18px; }
+    /* phones: the pad and buttons sit at the bottom of the screen; held upright, the chat goes under the game */
+    @media (pointer: coarse) { #pad { display: flex; position: fixed; right: 14px; bottom: 26px; } #dpad { display: grid; position: fixed; left: 12px; bottom: 16px; } #log { max-height: 84px; } }
+    @media (pointer: coarse) and (orientation: portrait) { #chat { position: static; width: 100%; padding: 6px 8px; } #log { max-height: 26vh; } }
+    @media (pointer: coarse) and (orientation: landscape) { #chat { width: 40%; bottom: auto; top: 40px; } #say { display: none; } }
+    #lost { position: fixed; inset: 0; display: grid; place-items: center; background: #000c; z-index: 20; text-align: center; }
+    #lost button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 0; background: var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <div class="box">
+      <h1>달무리 온라인</h1>
+      <p class="sub">달무리 진 밤, 솔빛마을에서 시작하는 작은 모험. 같이 접속한 사람들과 함께 사냥하세요.</p>
+      <label for="name">이름 (한글·영문·숫자 2~10자)</label>
+      <input id="name" type="text" maxlength="10" autocomplete="off" placeholder="예: 바람돌이">
+      <label>직업</label>
+      <div class="jobs" id="jobs"></div>
+      <label>옷 색깔</label>
+      <div class="colors" id="colors"></div>
+      <button class="go" id="go">입장하기</button>
+      <div class="err" id="err"></div>
+      <div class="foot">방향키로 걷기 · 스페이스로 공격·대화 · 1로 스킬 · 엔터로 채팅. 캐릭터는 이름으로 저장됩니다 (이 브라우저에서 이어하기).<br>
+        모든 그림·소리·음악은 <a href="https://github.com/olebangpad/pixspell" target="_blank" rel="noopener">PixSpell</a> 코드로 만들었습니다. 이미지 파일이 하나도 없어요.</div>
+    </div>
+  </div>
+
+  <div id="frame" class="hidden">
+    <canvas id="game" aria-label="달무리 온라인 게임 화면"></canvas>
+    <div id="chat"><div id="log" aria-live="polite"></div><input id="say" type="text" maxlength="60" placeholder="엔터를 눌러 채팅" autocomplete="off"></div>
+    <div id="dialog" class="hidden"></div>
+    <div id="dpad"><span></span><button data-dir="up">▲</button><span></span><button data-dir="left">◀</button><span></span><button data-dir="right">▶</button><span></span><button data-dir="down">▼</button><span></span></div>
+    <div id="pad"><button id="b-skill">기술</button><button id="b-act">공격</button></div>
+  </div>
+
+  <div id="lost" class="hidden"><div><p id="lost-text">서버와 연결이 끊어졌습니다.</p><button onclick="location.reload()">다시 접속</button></div></div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

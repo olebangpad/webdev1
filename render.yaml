@@ -1,0 +1,9 @@
+# Render (render.com) blueprint: one free web service that serves the page and the game's WebSocket.
+services:
+  - type: web
+    name: dalmuri
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
