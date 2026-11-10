@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>WORLDFALL · made with PixSpell</title>
+  <meta name="description" content="A survivors-like where heroes from around the world hold off a falling horde. Every sprite, effect, sound and song is PixSpell code: no image or audio files.">
+  <style>
+    :root { --bg: #0b0f14; --ink: #e8f3e4; --muted: #8aa592; --accent: #a8e05a; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.5 system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; overflow: hidden; }
+    canvas { image-rendering: pixelated; background: #000; touch-action: none; display: block; }
+    .bar { color: var(--muted); text-align: center; padding: 0 12px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="WORLDFALL"></canvas>
+  <div class="bar">Move: arrows / WASD or drag · weapons fire by themselves · Esc pause · M sound · P retro colors ·
+    every pixel and sound is <a href="https://github.com/olebangpad/pixspell">PixSpell</a> code · <a href="?demo">watch it play itself</a></div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
