@@ -1,6 +1,6 @@
 // The run: a hero, waves of monsters, weapons that fire by themselves, gems, level-ups, bosses.
 // Pure simulation (no drawing): render.js draws whatever is in the game object, sfx() reports sounds.
-import { HEROES, WEAPONS, PASSIVES, ENEMIES, RUN_SECONDS, xpFor } from './data.js'
+import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ENEMIES, DASH, RUN_SECONDS, xpFor } from './data.js'
 
 const TAU = Math.PI * 2
 const rnd = (a, b) => a + Math.random() * (b - a)
@@ -11,8 +11,8 @@ const MAX_ENEMIES = 320
 export function newGame(stage, heroId, { sfx = () => {} } = {}) {
   const hero = HEROES.find((h) => h.id === heroId)
   const g = {
-    stage, hero, sfx, t: 0, over: false, won: false, lv: 1, xp: 0, next: xpFor(1), kills: 0, gold: 0, levels: 0, choices: null,
-    p: { x: 0, y: 0, face: [1, 0], dir: 'down', moving: false, hp: hero.hp, inv: 0, hurt: 0 },
+    stage, hero, sfx, t: 0, over: false, won: false, lv: 1, xp: 0, next: xpFor(1), kills: 0, gold: 0, levels: 0, choices: null, rerolls: 2,
+    p: { x: 0, y: 0, face: [1, 0], dir: 'down', moving: false, hp: hero.hp, inv: 0, hurt: 0, blink: 0, dashT: 0, dashCd: 0, dashDir: [1, 0], trail: [] },
     stats: { might: 1, armor: 0, maxHp: hero.hp, haste: 0, area: 1, speed: 1, magnet: 1, crit: 0.05, growth: 1, regen: 0 },
     weapons: [], passives: {},
     enemies: [], shots: [], zones: [], fx: [], gems: [], drops: [], numbers: [],
@@ -36,18 +36,34 @@ export function addPassive(g, id) {
 }
 const dmgOf = (g, w) => w.def.dmg * (1 + 0.25 * (w.lv - 1)) * g.stats.might
 const cdOf = (g, w) => (w.def.cd * (1 - 0.06 * (w.lv - 1))) / (1 + g.stats.haste)
-const amountOf = (w) => 1 + w.def.more.filter((l) => w.lv >= l).length
+const amountOf = (w) => (w.def.count ?? 1) + w.def.more.filter((l) => w.lv >= l).length
 const areaOf = (g) => g.stats.area
+
+/** The evolution a weapon is ready for (level 5, not evolved yet, its passive held), or null. */
+export function evolutionFor(g, w) {
+  const evo = EVOLUTIONS[w.id]
+  return evo && !w.evo && w.lv >= 5 && g.passives[evo.needs] ? evo : null
+}
+export function evolve(g, id) {
+  const w = g.weapons.find((x) => x.id === id), evo = EVOLUTIONS[id]
+  if (!w || !evo || w.evo) return
+  Object.assign(w, { def: evo.def, evo: true, t: 0.2, spin: 0, points: null })
+  g.banner = { text: evo.def.name, t: 0, sub: 'WEAPON EVOLVED' }
+  g.fx.push({ name: 'sparkle-burst', opts: { size: 64, element: 'holy' }, x: g.p.x, y: g.p.y - 10, t: 0 })
+  g.shake = Math.max(g.shake, 0.2)
+  g.sfx('fanfare', undefined, 0.5)
+}
 
 /** Up to 3 (or 4 with luck) things to pick from at a level up. */
 export function makeChoices(g) {
   const opts = []
+  const ready = g.weapons.find((w) => evolutionFor(g, w)) // an evolution is always offered once it's possible
   for (const w of g.weapons) if (w.lv < 5) opts.push({ type: 'w', id: w.id, lv: w.lv + 1, weight: 3 })
   if (g.weapons.length < 6) for (const id of Object.keys(WEAPONS)) if (!g.weapons.some((w) => w.id === id)) opts.push({ type: 'w', id, lv: 1, weight: 1 })
   const owned = Object.keys(g.passives)
   for (const id of owned) if (g.passives[id] < 5) opts.push({ type: 'p', id, lv: g.passives[id] + 1, weight: 2 })
   if (owned.length < 6) for (const id of Object.keys(PASSIVES)) if (!g.passives[id]) opts.push({ type: 'p', id, lv: 1, weight: 1 })
-  const out = []
+  const out = ready ? [{ type: 'evo', id: ready.id }] : []
   const n = g.stats.crit > 0.2 ? 4 : 3
   while (out.length < n && opts.length) {
     let r = Math.random() * opts.reduce((s, o) => s + o.weight, 0), i = 0
@@ -57,8 +73,17 @@ export function makeChoices(g) {
   if (!out.length) out.push({ type: 'heal' }, { type: 'gold' })
   return out
 }
+/** Deal the level-up cards again (a few times a run). */
+export function reroll(g) {
+  if (!g.choices || g.rerolls <= 0) return false
+  g.rerolls--
+  g.choices = makeChoices(g)
+  g.sfx('switch', undefined, 0.4)
+  return true
+}
 export function choose(g, c) {
-  if (c.type === 'w') addWeapon(g, c.id)
+  if (c.type === 'evo') evolve(g, c.id)
+  else if (c.type === 'w') addWeapon(g, c.id)
   else if (c.type === 'p') addPassive(g, c.id)
   else if (c.type === 'heal') g.p.hp = g.stats.maxHp
   else g.gold += 25
@@ -142,16 +167,20 @@ function fire(g, w) {
       const dirs = [0, Math.PI, Math.PI / 2, -Math.PI / 2]
       const close = nearest(g, p.x, p.y, 1, (def.long ?? def.reach * 2.5) * area)[0]
       const aim = close ? Math.atan2(close.y - p.y, close.x - p.x) : angle0
-      for (let i = 0; i < n; i++) {
-        const a = aim + dirs[i % 4], dx = Math.cos(a), dy = Math.sin(a)
+      let angles = Array.from({ length: n }, (_, i) => aim + dirs[i % 4])
+      if (def.fan) angles = Array.from({ length: def.fan }, (_, i) => aim + (i - (def.fan - 1) / 2) * 0.3) // thrusts side by side
+      if (def.star) { w.spin = (w.spin + Math.PI / def.star) % TAU; angles = Array.from({ length: def.star }, (_, i) => w.spin + (i / def.star) * TAU) } // all round, turning a little each time
+      for (const [i, a] of angles.entries()) {
+        const dx = Math.cos(a), dy = Math.sin(a)
         if (def.long) { // a spear: everything along a line
           const len = def.long * area
           for (let s = 8; s <= len; s += 10) near(g, p.x + dx * s, p.y - 6 + dy * s, 9 * area, (e) => { if (e.hitStamp !== g.t) { e.hitStamp = g.t; damage(g, e, dmg, { kx: dx, ky: dy }) } })
-          g.fx.push({ name: def.fx, opts: { size: 48 }, x: p.x + dx * len * 0.5, y: p.y - 6 + dy * len * 0.5, rot: a, t: -i * 0.08, scaleX: len / 40 })
+          g.fx.push({ name: def.fx, opts: { size: 48 }, x: p.x + dx * len * 0.5, y: p.y - 6 + dy * len * 0.5, rot: a, t: def.star ? 0 : -i * 0.05, scaleX: len / 40 })
         } else {
           const cx = p.x + dx * def.reach * area, cy = p.y - 6 + dy * def.reach * area
           near(g, cx, cy, (def.size / 2) * area, (e) => damage(g, e, dmg, { kx: dx, ky: dy }))
           g.fx.push({ name: def.fx, opts: { size: Math.round(def.size * area) + 8 }, x: cx, y: cy, rot: a, t: -i * 0.08 })
+          if (def.wave) g.shots.push({ kind: 'shot', x: cx, y: cy, vx: dx * 170, vy: dy * 170, dmg: dmg * 0.7, pierce: 99, life: 0.9, hit: new Set(), name: 'wave', opts: { size: 32 }, wide: 10, delay: i * 0.08 }) // a crescent flies on
         }
       }
       g.sfx(def.fx === 'thrust' ? 'thrust' : def.fx === 'stab' ? 'stab' : 'slash', undefined, 0.25)
@@ -161,22 +190,38 @@ function fire(g, w) {
       const r = def.radius * area * (1 + 0.1 * (w.lv - 1))
       near(g, p.x, p.y, r, (e) => damage(g, e, dmg, { kx: e.x - p.x, ky: e.y - p.y, knock: 120 }))
       g.fx.push({ name: def.fx, opts: { size: Math.round(r * 2) }, x: p.x, y: p.y - 4, t: 0 }, { name: 'smash', opts: { size: 40 }, x: p.x + fx0 * 10, y: p.y - 6, t: 0 })
+      if (def.aftershock) { // a second, wider ring a moment later
+        g.zones.push({ kind: 'strike', x: p.x, y: p.y, r: r * 1.7, dmg: dmg * 0.6, delay: 0.3, life: 0.4, done: false, knock: 90 })
+        g.fx.push({ name: 'shockwave', opts: { size: Math.round(r * 3.4), element: 'fire' }, x: p.x, y: p.y - 4, t: -0.22 })
+      }
+      if (def.geysers) { // and the ground erupts under a few of them
+        const pool = g.enemies.filter((e) => !e.dead && onScreen(g, e))
+        for (let i = 0; i < def.geysers && pool.length; i++) {
+          const e = pool.splice(Math.floor(Math.random() * pool.length), 1)[0]
+          g.zones.push({ kind: 'strike', x: e.x, y: e.y, r: 22 * area, dmg, delay: 0.3 + i * 0.1, life: 0.6, done: false, el: 'fire' })
+          g.fx.push({ name: 'geyser', opts: { size: 48, element: 'fire' }, x: e.x, y: e.y - 18, t: -i * 0.1 })
+        }
+      }
       g.shake = Math.max(g.shake, 0.15)
       g.sfx('quake', undefined, 0.35)
       return
     }
     case 'shot': {
-      const targets = nearest(g, p.x, p.y, n)
-      for (let i = 0; i < n; i++) {
-        const t = targets[i] ?? targets[0]
-        const a = t ? Math.atan2(t.y - 6 - (p.y - 8), t.x - p.x) : angle0 + (i - (n - 1) / 2) * 0.3
-        g.shots.push({ kind: 'shot', x: p.x, y: p.y - 8, vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, dmg, pierce: def.pierce + Math.floor((w.lv - 1) / 2), life: 2, hit: new Set(), name: def.fx, opts: { size: 20, ...(def.el ? { element: def.el } : {}) }, homing: def.homing ? t : null, el: def.el, delay: i * 0.06 })
+      const total = def.spread ?? def.burst ?? n
+      const targets = nearest(g, p.x, p.y, total)
+      const aim = targets[0] ? Math.atan2(targets[0].y - 6 - (p.y - 8), targets[0].x - p.x) : angle0
+      for (let i = 0; i < total; i++) {
+        const t = targets[i % Math.max(1, targets.length)]
+        let a = t ? Math.atan2(t.y - 6 - (p.y - 8), t.x - p.x) : angle0 + (i - (n - 1) / 2) * 0.3
+        if (def.spread) a = aim + (i - (total - 1) / 2) * 0.13 // a fan at the nearest
+        if (def.burst) a = (i / total) * TAU + g.t // out in a ring, then each finds someone
+        g.shots.push({ kind: 'shot', x: p.x, y: p.y - 8, vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, dmg, pierce: def.pierce + Math.floor((w.lv - 1) / 2), life: 2, hit: new Set(), name: def.fx, opts: { size: 20, ...(def.el ? { element: def.el } : {}) }, homing: def.homing ? t : null, homeAfter: def.burst ? 0.18 : 0, spinRot: def.fx === 'spinner', el: def.el, delay: def.spread || def.burst ? 0 : i * 0.06 })
       }
       g.sfx(def.fx === 'arrow' ? 'shoot' : 'magic', undefined, 0.2)
       return
     }
     case 'ring': {
-      const count = def.count + n - 1
+      const count = n
       w.spin += 0.4
       for (let i = 0; i < count; i++) {
         const a = w.spin + (i / count) * TAU
@@ -189,7 +234,7 @@ function fire(g, w) {
       for (let i = 0; i < n; i++) {
         const t = nearest(g, p.x, p.y, n)[i]
         const a = t ? Math.atan2(t.y - p.y, t.x - p.x) : angle0 + i * 0.6
-        g.shots.push({ kind: 'boomerang', x: p.x, y: p.y - 8, vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, dmg, life: 2.4, age: 0, hitAt: new Map(), sprite: def.icon })
+        g.shots.push({ kind: 'boomerang', x: p.x, y: p.y - 8, vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, dmg, life: 2.4, age: 0, hitAt: new Map(), sprite: def.icon, wide: def.wide, gems: def.gems, scale: def.wide ? 2 : 1 })
       }
       g.sfx('throw', undefined, 0.25)
       return
@@ -198,13 +243,14 @@ function fire(g, w) {
       const pool = g.enemies.filter((e) => !e.dead && onScreen(g, e))
       for (let i = 0; i < n && pool.length; i++) {
         const e = pool.splice(Math.floor(Math.random() * pool.length), 1)[0]
-        g.zones.push({ kind: 'strike', x: e.x, y: e.y, r: def.radius * area, dmg, delay: def.delay ?? 0.12, life: (def.delay ?? 0.12) + 0.05, done: false, el: def.el })
+        g.zones.push({ kind: 'strike', x: e.x, y: e.y, r: def.radius * area, dmg, delay: def.delay ?? 0.12, life: (def.delay ?? 0.12) + 0.05, done: false, el: def.el, chain: def.chain, seen: def.chain ? new Set([e]) : null })
         g.fx.push({ name: def.fx, opts: { size: def.size ?? (def.fx === 'holy-beam' ? 48 : 40), ...(def.el && def.fx !== 'meteor' ? { element: def.el } : def.fx === 'meteor' ? { element: 'fire' } : {}) }, x: e.x, y: e.y - (def.fx === 'meteor' ? 16 : 20), t: -i * 0.05 })
+        if (def.field && i === 0) g.zones.push({ kind: 'pool', x: e.x, y: e.y, r: 24 * area, dmg: dmg * 0.3, life: 1.6, tick: 0.4, hitAt: new Map(), el: def.el, fx: { name: 'electric-field', opts: { size: Math.round(48 * area) } } })
       }
       g.sfx(def.fx === 'meteor' ? 'meteor' : def.fx === 'holy-beam' ? 'holy' : 'zap', undefined, 0.3)
       return
     }
-    case 'orbit': return // always on: handled every frame
+    case 'orbit': case 'sweep': return // always on: handled every frame
     case 'aura': {
       const r = def.radius * area * (1 + 0.12 * (w.lv - 1))
       near(g, p.x, p.y - 6, r, (e) => damage(g, e, dmg, { kx: e.x - p.x, ky: e.y - p.y, knock: 10, el: def.el }))
@@ -259,13 +305,15 @@ function spawn(g, kind, at) {
   const def = ENEMIES[kind], t = g.t
   const a = at ?? rnd(0, TAU), d = 240
   const x = g.p.x + Math.cos(a) * d * 1.05, y = g.p.y + Math.sin(a) * d * 0.7
-  const hpMul = def.boss ? 1 : 1 + t / 170
+  const hpMul = def.boss ? 1 : 1 + t / 260
   g.enemies.push({
     kind, def, x, y, hp: def.hp * hpMul, maxHp: def.hp * hpMul, speed: def.speed * (1 + t / 900) * rnd(0.9, 1.1), dmg: def.dmg, xp: def.xp,
     r: def.big ? 14 : 7, kx: 0, ky: 0, flash: 0, slow: 0, dir: 'left', big: !!def.big, boss: !!def.boss, final: !!def.final, name: def.boss,
   })
   return g.enemies.at(-1)
 }
+/** Monsters a second, t seconds into a run. */
+export const spawnRate = (t) => 0.9 + t / 45
 function spawning(g, dt) {
   const st = g.stage, t = g.t
   // the bosses
@@ -281,12 +329,12 @@ function spawning(g, dt) {
   if (g.eliteT <= 0) { g.eliteT = 55; spawn(g, pick(st.elites)) }
   // a ring closing in, twice a run
   for (const at of [130, 330]) if (t - dt < at && t >= at) for (let i = 0; i < 36; i++) spawn(g, st.waves.findLast((wv) => wv[0] <= t)[1][0], (i / 36) * TAU)
-  // the rest, faster and in bigger groups as time goes on
-  g.spawnT -= dt
-  if (g.spawnT > 0 || g.enemies.length >= MAX_ENEMIES) return
-  g.spawnT = Math.max(0.1, 0.85 - t / 320)
+  // the rest: more of them every minute (about one a second at first, ten a second at the end), in growing groups
+  g.spawnAcc = (g.spawnAcc ?? 1) + spawnRate(t) * dt
+  const n = 2 + Math.floor(t / 90)
+  if (g.spawnAcc < n || g.enemies.length >= MAX_ENEMIES) return
+  g.spawnAcc -= n
   const kinds = st.waves.findLast((wv) => wv[0] <= t)[1]
-  const n = 1 + Math.floor(t / 80)
   const a = rnd(0, TAU)
   for (let i = 0; i < n; i++) spawn(g, pick(kinds), a + rnd(-0.4, 0.4))
 }
@@ -298,6 +346,27 @@ export function step(g, dt, move) {
   const p = g.p, s = g.stats
   // the hero
   p.moving = !!move
+  // the dash: a burst the way you're going (or facing), untouchable while it lasts
+  p.dashCd = Math.max(0, p.dashCd - dt)
+  if (g.wantDash) {
+    g.wantDash = false
+    if (p.dashCd <= 0 && p.dashT <= 0) {
+      const l = move ? Math.hypot(move[0], move[1]) || 1 : 1
+      p.dashDir = move ? [move[0] / l, move[1] / l] : p.face
+      p.dashT = DASH.time; p.dashCd = DASH.cd * (g.dashCdMul ?? 1)
+      p.inv = Math.max(p.inv, DASH.time + 0.12)
+      g.fx.push({ name: 'dust', opts: { size: 24 }, x: p.x, y: p.y - 4, t: 0 })
+      g.sfx('dash', undefined, 0.35)
+    }
+  }
+  if (p.dashT > 0) {
+    p.dashT = Math.max(0, p.dashT - dt)
+    const sp = g.hero.speed * s.speed * DASH.speed
+    p.x += p.dashDir[0] * sp * dt; p.y += p.dashDir[1] * sp * dt
+    p.trail.push({ x: p.x, y: p.y, t: g.t })
+    move = null // the dash carries you
+  }
+  p.trail = p.trail.filter((q) => g.t - q.t < 0.25)
   if (move) {
     const l = Math.hypot(move[0], move[1]) || 1, sp = g.hero.speed * s.speed
     p.x += (move[0] / l) * sp * dt; p.y += (move[1] / l) * sp * dt
@@ -308,6 +377,7 @@ export function step(g, dt, move) {
   }
   p.inv = Math.max(0, p.inv - dt)
   p.hurt = Math.max(0, p.hurt - dt)
+  p.blink = Math.max(0, p.blink - dt)
   if (s.regen) p.hp = Math.min(s.maxHp, p.hp + s.regen * dt)
   spawning(g, dt)
   rebuildGrid(g)
@@ -324,7 +394,7 @@ export function step(g, dt, move) {
     if (d > 420 && !e.boss) { e.x = p.x - dx * 0.95; e.y = p.y - dy * 0.95 } // fell too far behind: come round the other side
     if (d < e.r + 6 && p.inv <= 0) {
       const n = Math.max(1, Math.round(e.dmg * Math.min(1.6, 0.5 + g.t / 300)) - s.armor) // gentle at first, harder later
-      p.hp -= n; p.inv = 0.6; p.hurt = 0.2
+      p.hp -= n; p.inv = 0.6; p.blink = 0.6; p.hurt = 0.2
       g.numbers.push({ x: p.x, y: p.y - 26, n, hurt: true, t: 0 })
       g.shake = Math.max(g.shake, 0.12)
       g.sfx('hurt', undefined, 0.35)
@@ -341,6 +411,7 @@ export function step(g, dt, move) {
   // weapons
   for (const w of g.weapons) {
     if (w.def.kind === 'orbit') { orbit(g, w, dt); continue }
+    if (w.def.kind === 'sweep') { sweep(g, w, dt); continue }
     if (w.def.kind === 'aura') w.glow = (w.glow ?? 0) + dt
     w.t -= dt
     if (w.t <= 0) { w.t = cdOf(g, w); fire(g, w) }
@@ -380,14 +451,43 @@ function orbit(g, w, dt) {
   const def = w.def, n = amountOf(w), r = def.radius * areaOf(g), dmg = dmgOf(g, w)
   w.spin += dt * def.spin
   w.points = []
-  for (let i = 0; i < n; i++) {
-    const a = w.spin + (i / n) * TAU, x = g.p.x + Math.cos(a) * r, y = g.p.y - 8 + Math.sin(a) * r * 0.8
-    w.points.push([x, y, a])
-    near(g, x, y, 8, (e) => {
-      const key = w.id + i
-      if ((e.hitAt?.[key] ?? -9) > g.t - 0.4) return
-      ;(e.hitAt ??= {})[key] = g.t
-      damage(g, e, dmg, { kx: e.x - g.p.x, ky: e.y - g.p.y, knock: 50 })
+  const rings = [[n, r, 1, def.sprite], ...(def.outer ? [[def.outer, r * 1.8, -0.7, def.sprite2]] : [])] // [how many, how far, which way, what]
+  rings.forEach(([count, radius, turn, look], ri) => {
+    for (let i = 0; i < count; i++) {
+      const a = w.spin * turn + (i / count) * TAU, x = g.p.x + Math.cos(a) * radius, y = g.p.y - 8 + Math.sin(a) * radius * 0.8
+      w.points.push([x, y, look])
+      near(g, x, y, 8, (e) => {
+        const key = w.id + ri + i
+        if ((e.hitAt?.[key] ?? -9) > g.t - 0.4) return
+        ;(e.hitAt ??= {})[key] = g.t
+        damage(g, e, dmg, { kx: e.x - g.p.x, ky: e.y - g.p.y, knock: 50 })
+      })
+    }
+  })
+  if (def.bolts && (w.t -= dt) <= 0) { // a few of the books shoot at whoever is nearest
+    w.t = def.bolts / (1 + g.stats.haste)
+    for (let i = 0; i < 3; i++) {
+      const [x, y] = w.points[Math.floor(Math.random() * w.points.length)], t = nearest(g, x, y, 1, 160)[0]
+      if (!t) break
+      const a = Math.atan2(t.y - 6 - y, t.x - x)
+      g.shots.push({ kind: 'shot', x, y, vx: Math.cos(a) * 200, vy: Math.sin(a) * 200, dmg: dmg * 0.8, pierce: 1, life: 1.2, hit: new Set(), name: 'energy-bolt', opts: { size: 20, element: 'arcane' }, el: 'arcane' })
+    }
+    g.sfx('magic', undefined, 0.15)
+  }
+}
+
+// rays that turn around you, burning whoever they pass over
+function sweep(g, w, dt) {
+  const def = w.def, len = def.reach * areaOf(g), dmg = dmgOf(g, w)
+  w.spin = (w.spin + dt * def.spin) % TAU
+  w.beams = Array.from({ length: def.beams }, (_, i) => w.spin + (i / def.beams) * TAU)
+  w.len = len
+  for (const a of w.beams) {
+    const dx = Math.cos(a), dy = Math.sin(a)
+    for (let s = 12; s <= len; s += 12) near(g, g.p.x + dx * s, g.p.y - 8 + dy * s, 7, (e) => {
+      if ((e.hitAt?.[w.id] ?? -9) > g.t - 0.25) return
+      ;(e.hitAt ??= {})[w.id] = g.t
+      damage(g, e, dmg, { kx: -dy, ky: dx, knock: 30, el: def.el })
     })
   }
 }
@@ -413,11 +513,14 @@ function moveShots(g, dt) {
       if (s.age > 0.55) { const dx = g.p.x - s.x, dy = g.p.y - 8 - s.y, d = Math.hypot(dx, dy) || 1; s.vx += (dx / d) * 600 * dt; s.vy += (dy / d) * 600 * dt; if (d < 10 && s.age > 0.8) s.done = true }
       const sp = Math.hypot(s.vx, s.vy); if (sp > 220) { s.vx *= 220 / sp; s.vy *= 220 / sp }
     }
-    if (s.homing && !s.homing.dead) { const dx = s.homing.x - s.x, dy = s.homing.y - 6 - s.y, d = Math.hypot(dx, dy) || 1, sp = Math.hypot(s.vx, s.vy); s.vx += ((dx / d) * sp - s.vx) * Math.min(1, dt * 6); s.vy += ((dy / d) * sp - s.vy) * Math.min(1, dt * 6) }
+    if (s.homeAfter > 0) s.homeAfter -= dt
+    else if (s.homing?.dead) s.homing = nearest(g, s.x, s.y, 1, 120)[0] ?? null // its target fell: find another
+    if (s.gems) for (const gem of g.gems) if (!gem.pull && (gem.x - s.x) ** 2 + (gem.y - s.y) ** 2 < 900) gem.pull = true
+    if (s.homing && !s.homing.dead && !(s.homeAfter > 0)) { const dx = s.homing.x - s.x, dy = s.homing.y - 6 - s.y, d = Math.hypot(dx, dy) || 1, sp = Math.hypot(s.vx, s.vy); s.vx += ((dx / d) * sp - s.vx) * Math.min(1, dt * 6); s.vy += ((dy / d) * sp - s.vy) * Math.min(1, dt * 6) }
     s.x += s.vx * dt; s.y += s.vy * dt
     s.life -= dt
     if (s.life <= 0) s.done = true
-    near(g, s.x, s.y + 6, 5, (e) => {
+    near(g, s.x, s.y + 6, s.wide ?? 5, (e) => {
       if (s.done) return
       if (s.kind === 'boomerang') { if ((s.hitAt.get(e) ?? -9) > g.t - 0.4) return; s.hitAt.set(e, g.t) } else { if (s.hit.has(e)) return; s.hit.add(e) }
       damage(g, e, s.dmg, { kx: s.vx, ky: s.vy, el: s.el })
@@ -428,11 +531,25 @@ function moveShots(g, dt) {
 }
 
 function zones(g, dt) {
+  const chained = []
   for (const z of g.zones) {
     z.life -= dt
     if (z.kind === 'strike') {
       z.delay -= dt
-      if (z.delay <= 0 && !z.done) { z.done = true; near(g, z.x, z.y, z.r, (e) => damage(g, e, z.dmg, { kx: e.x - z.x, ky: e.y - z.y, knock: 60, el: z.el })) }
+      if (z.delay <= 0 && !z.done) {
+        z.done = true
+        near(g, z.x, z.y, z.r, (e) => damage(g, e, z.dmg, { kx: e.x - z.x, ky: e.y - z.y, knock: z.knock ?? 60, el: z.el }))
+        if (z.chain > 0) { // lightning jumps to the nearest one it hasn't touched
+          let next = null, bd = 80 * 80
+          near(g, z.x, z.y, 80, (e) => { const d = (e.x - z.x) ** 2 + (e.y - z.y) ** 2; if (!z.seen.has(e) && d < bd) { bd = d; next = e } })
+          if (next) {
+            z.seen.add(next)
+            const d = Math.sqrt(bd) || 1
+            g.fx.push({ name: 'chain-lightning', opts: { size: 40, element: z.el }, x: (z.x + next.x) / 2, y: (z.y + next.y) / 2 - 8, rot: Math.atan2(next.y - z.y, next.x - z.x), scaleX: d / 40, t: 0 })
+            chained.push({ kind: 'strike', x: next.x, y: next.y, r: z.r, dmg: z.dmg * 0.85, delay: 0.07, life: 0.15, done: false, el: z.el, chain: z.chain - 1, seen: z.seen })
+          }
+        }
+      }
       continue
     }
     if (z.follow) { z.x = g.p.x; z.y = g.p.y; z.face = g.p.face }
@@ -446,5 +563,5 @@ function zones(g, dt) {
       hit(e)
     })
   }
-  g.zones = g.zones.filter((z) => z.life > 0)
+  g.zones = g.zones.filter((z) => z.life > 0).concat(chained)
 }

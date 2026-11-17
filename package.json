@@ -1,0 +1,12 @@
+{
+  "name": "worldfall",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A survivors-like drawn entirely with PixSpell",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "sim": "node scripts/sim.mjs"
+  },
+  "license": "MIT"
+}

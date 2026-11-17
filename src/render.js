@@ -1,6 +1,7 @@
 // Drawing: the ground, everyone on it, every effect, the HUD and the menus. Everything is a PixSpell image.
 import { spell, Pixmap, walk, idle, fx, sprite, frames, white, big, label, color } from './pix.js'
-import { HEROES, WEAPONS, PASSIVES, ENEMIES, STAGES } from './data.js'
+import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, STAGES, DASH } from './data.js'
+import { evolutionFor } from './game.js'
 
 export const W = 400, H = 225
 const CHUNK = 32 // tiles per ground chunk (it repeats)
@@ -93,11 +94,17 @@ export function drawWorld(g, now) {
   // what flies
   for (const s of g.shots) {
     if (s.delay > 0) continue
-    if (s.sprite) { const img = sprite(s.sprite); rotated(img, s.x - cx, s.y - cy, s.kind === 'boomerang' ? now * 18 : now * 10); continue }
+    if (s.sprite) { const img = sprite(s.sprite); rotated(img, s.x - cx, s.y - cy, s.kind === 'boomerang' ? now * 18 : now * 10, s.scale ?? 1, s.scale ?? 1); continue }
     const f = fx(s.name, s.opts), img = f[Math.floor(now * (f.fps ?? 14)) % f.length]
     rotated(img, s.x - cx, s.y - cy, s.spinRot ? now * 12 : Math.atan2(s.vy, s.vx))
   }
-  for (const w of g.weapons) if (w.def.kind === 'orbit' && w.points) for (const [x, y] of w.points) { const img = sprite(w.def.sprite); drawCentered(img, x - cx, y - cy) }
+  for (const w of g.weapons) {
+    if (w.def.kind === 'orbit' && w.points) for (const [x, y, look] of w.points) drawCentered(sprite(look), x - cx, y - cy)
+    if (w.def.kind === 'sweep' && w.beams) { // rays that turn around you: one laser image stretched along each
+      const f = fx('laser', { size: 48, element: w.def.el }), img = f[Math.floor(now * 16) % f.length]
+      for (const a of w.beams) rotated(img, g.p.x - cx + Math.cos(a) * (w.len / 2 + 6), g.p.y - 8 - cy + Math.sin(a) * (w.len / 2 + 6), a, w.len / img.w, 0.6)
+    }
+  }
   // effects that play once
   g.fx = g.fx.filter((e) => {
     if (e.t < 0) return true
@@ -117,9 +124,12 @@ export function drawWorld(g, now) {
   // your health, under your feet
   ctx.fillStyle = color('#10141a'); ctx.fillRect(Math.round(g.p.x - cx - 12), Math.round(g.p.y - cy + 3), 24, 3)
   ctx.fillStyle = color('#e8443a'); ctx.fillRect(Math.round(g.p.x - cx - 11), Math.round(g.p.y - cy + 4), Math.round((22 * g.p.hp) / g.stats.maxHp), 1)
+  // and the dash, filling up again
+  const ready = 1 - g.p.dashCd / (DASH.cd * (g.dashCdMul ?? 1))
+  ctx.fillStyle = color(ready >= 1 ? '#7fe3ff' : '#3a6a88'); ctx.fillRect(Math.round(g.p.x - cx - 11), Math.round(g.p.y - cy + 7), Math.round(22 * Math.max(0, ready)), 1)
 }
-function rotated(img, x, y, a, sx = 1) {
-  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.rotate(a); if (sx !== 1) ctx.scale(sx, 1)
+function rotated(img, x, y, a, sx = 1, sy = 1) {
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.rotate(a); if (sx !== 1 || sy !== 1) ctx.scale(sx, sy)
   ctx.drawImage(img.canvas, -img.w / 2, -img.h / 2); ctx.restore()
 }
 function drawHero(g, now, cx, cy) {
@@ -128,9 +138,14 @@ function drawHero(g, now, cx, cy) {
   // (facing the camera it breathes with its idle animation instead)
   const breathing = !g.p.moving && g.p.dir === 'down'
   const f = breathing ? idle(spec) : walk(spec, g.p.dir)
-  if (g.p.inv > 0 && Math.floor(now * 20) % 2) return // blink while you can't be hurt
-  const fr = g.p.hurt > 0 ? white(f, 'hero' + g.hero.id + !!g.tall + g.p.dir + breathing) : f
   const i = g.p.moving ? Math.floor(now * (f.fps ?? 6)) % f.length : breathing ? Math.floor(now * 3) % f.length : 0
+  for (const q of g.p.trail) { // where the dash just was, fading
+    ctx.globalAlpha = 0.5 * (1 - (g.t - q.t) / 0.25)
+    draw(f[i], q.x - cx - f.origin[0], q.y - cy - f.origin[1])
+  }
+  ctx.globalAlpha = 1
+  if (g.p.blink > 0 && Math.floor(now * 20) % 2) return // blink after a hit, while you can't be hurt again
+  const fr = g.p.hurt > 0 ? white(f, 'hero' + g.hero.id + !!g.tall + g.p.dir + breathing) : f
   draw(fr[i], g.p.x - cx - f.origin[0], g.p.y - cy - f.origin[1])
 }
 
@@ -144,7 +159,11 @@ export function drawHud(g) {
   draw(t, (W - t.w) / 2, 7)
   draw(label(`${g.kills}`, '#ffd23f'), W - 30, 15)
   draw(label(`${g.gold}G`, '#ffd23f'), W - 30, 24)
-  g.weapons.forEach((w, i) => { draw(sprite(w.def.icon), 3 + i * 18, 7); draw(label(w.lv, '#ffd23f'), 13 + i * 18, 17) })
+  g.weapons.forEach((w, i) => {
+    if (w.evo) { ctx.fillStyle = color('#ffd23f'); ctx.globalAlpha = 0.35; ctx.fillRect(2 + i * 18, 6, 18, 18); ctx.globalAlpha = 1 }
+    draw(sprite(w.def.icon), 3 + i * 18, 7)
+    draw(label(w.evo ? '*' : w.lv, '#ffd23f'), 13 + i * 18, 17)
+  })
   Object.entries(g.passives).forEach(([id, lv], i) => { draw(sprite(PASSIVES[id].icon, { grid: 8 }), 3 + i * 12, 27); draw(label(lv, '#cfe8d4'), 9 + i * 12, 31) })
   if (g.boss && !g.boss.dead) {
     const bw = 200, x = (W - bw) / 2, y = H - 14
@@ -152,11 +171,12 @@ export function drawHud(g) {
     ctx.fillStyle = color('#ff4fd8'); ctx.fillRect(x, y, Math.round((bw * g.boss.hp) / g.boss.maxHp), 4)
     const n = label(g.boss.name, '#ff9af0'); draw(n, (W - n.w) / 2, y - 9)
   }
-  if (g.banner && !g.over && !g.choices) {
+  if (g.banner && !g.over && !g.choices && !g.paused) {
     const k = g.banner.t, b = label(g.banner.text, g.banner.warn ? '#ff5a4a' : '#ffd23f', 3)
     ctx.globalAlpha = Math.min(1, k * 4, (3 - k) * 2)
     draw(b, (W - b.w) / 2, 40)
-    if (g.banner.warn) { const s = label('A BOSS IS COMING', '#ffffff'); draw(s, (W - s.w) / 2, 62) }
+    const sub = g.banner.warn ? 'A BOSS IS COMING' : g.banner.sub
+    if (sub) { const s = label(sub, '#ffffff'); draw(s, (W - s.w) / 2, 62) }
     ctx.globalAlpha = 1
   }
 }
@@ -167,27 +187,41 @@ const panel = (w, h) => sprite('panel').nineSlice(w, h)
 const centered = (img, y) => draw(img, Math.round((W - img.w) / 2), y)
 
 /** Level-up cards; returns their boxes so clicks and taps can find them. */
-export function drawChoices(g, sel) {
+export function drawChoices(g, sel, now = 0) {
   dim(0.55)
-  centered(label('LEVEL UP!', '#ffd23f', 2), 26)
-  const n = g.choices.length, cw = n === 4 ? 92 : 112, gap = 6, x0 = (W - (n * cw + (n - 1) * gap)) / 2, y = 58, ch = 100
-  return g.choices.map((c, i) => {
+  centered(label('LEVEL UP!', '#ffd23f', 2), 22)
+  const n = g.choices.length, cw = n === 4 ? 92 : 112, gap = 6, x0 = (W - (n * cw + (n - 1) * gap)) / 2, y = 46, ch = 112
+  const boxes = g.choices.map((c, i) => {
     const x = x0 + i * (cw + gap)
-    const def = c.type === 'w' ? WEAPONS[c.id] : c.type === 'p' ? PASSIVES[c.id] : null
+    const evo = c.type === 'evo' ? EVOLUTIONS[c.id] : null
+    const def = evo ? evo.def : c.type === 'w' ? WEAPONS[c.id] : c.type === 'p' ? PASSIVES[c.id] : null
     draw(panel(cw, ch), x, y)
-    if (i === sel) { ctx.strokeStyle = color('#ffd23f'); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cw - 1, ch - 1) }
+    if (evo) { ctx.fillStyle = color('#ffd23f'); ctx.globalAlpha = 0.25 + 0.15 * Math.sin(now * 6); ctx.fillRect(x + 2, y + 2, cw - 4, ch - 4); ctx.globalAlpha = 1 }
+    if (i === sel || evo) { ctx.strokeStyle = color(evo ? '#fff3a0' : '#ffd23f'); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cw - 1, ch - 1) }
     if (def) {
       const icon = sprite(def.icon).scale(2)
       draw(icon, x + (cw - icon.w) / 2, y + 8)
       const name = label(def.name, '#ffffff'); draw(name, x + (cw - name.w) / 2, y + 44)
-      const lv = label(c.lv === 1 ? 'NEW!' : `LV ${c.lv}`, c.lv === 1 ? '#7dff8a' : '#ffd23f'); draw(lv, x + (cw - lv.w) / 2, y + 54)
-      words(def.desc, cw - 10).forEach((line, j) => { const l = label(line, '#cfe8d4'); draw(l, x + (cw - l.w) / 2, y + 68 + j * 8) })
+      const lv = label(evo ? 'EVOLVE!' : c.lv === 1 ? 'NEW!' : `LV ${c.lv}`, evo ? '#fff3a0' : c.lv === 1 ? '#7dff8a' : '#ffd23f'); draw(lv, x + (cw - lv.w) / 2, y + 54)
+      words(def.desc, cw - 10).forEach((line, j) => { const l = label(line, '#cfe8d4'); draw(l, x + (cw - l.w) / 2, y + 66 + j * 8) })
+      // what it takes to evolve: the weapon and the passive that go together
+      const pair = c.type === 'w' && EVOLUTIONS[c.id] && !g.weapons.find((w) => w.id === c.id)?.evo ? [PASSIVES[EVOLUTIONS[c.id].needs].icon, !!g.passives[EVOLUTIONS[c.id].needs]]
+        : c.type === 'p' ? (() => { const w = g.weapons.find((w) => EVOLUTIONS[w.id]?.needs === c.id && !w.evo); return w ? [w.def.icon, true] : null })() : null
+      if (pair) {
+        const t = label('EVO +', pair[1] ? '#fff3a0' : '#8a7a50')
+        draw(t, x + (cw - t.w - 10) / 2, y + ch - 13); draw(sprite(pair[0], { grid: 8 }), x + (cw - t.w - 10) / 2 + t.w + 2, y + ch - 15)
+      }
     } else {
       const l = label(c.type === 'heal' ? 'FULL HEAL' : '+25 GOLD', '#ffffff'); draw(l, x + (cw - l.w) / 2, y + 44)
     }
     const k = label(String(i + 1), '#6f8f78'); draw(k, x + 4, y + 4)
-    return [x, y, cw, ch]
+    return ['card', i, x, y, cw, ch]
   })
+  // deal again
+  const r = label(`R: REROLL (${g.rerolls})`, g.rerolls > 0 ? '#ffffff' : '#6f8f78'), rw = r.w + 12, rx = Math.round((W - rw) / 2), ry = y + ch + 8
+  draw(panel(rw, 15), rx, ry); draw(r, rx + 6, ry + 5)
+  boxes.push(['reroll', 0, rx, ry, rw, 15])
+  return boxes
 }
 function words(s, width) { // wrap pixel text by width (5 px font: 6 px a letter)
   const out = []; let line = ''
@@ -205,10 +239,22 @@ export function drawOver(g) {
   centered(label('ENTER: AGAIN   ESC: HEROES', '#cfe8d4'), 150)
 }
 
-export function drawPause() {
-  dim(0.6)
-  centered(label('PAUSED', '#ffffff', 3), 60)
-  centered(label('ESC: GO ON   M: SOUND   P: COLORS   Q: QUIT', '#cfe8d4'), 100)
+export function drawPause(g) {
+  dim(0.7)
+  centered(label('PAUSED', '#ffffff', 3), 14)
+  // your weapons, and what each needs to evolve
+  g.weapons.forEach((w, i) => {
+    const y = 44 + i * 19, evo = EVOLUTIONS[w.id]
+    draw(sprite(w.def.icon), 60, y)
+    draw(label(`${w.def.name}  ${w.evo ? 'EVOLVED' : 'LV ' + w.lv}`, w.evo ? '#fff3a0' : '#ffffff'), 80, y + 2)
+    if (evo && !w.evo) {
+      const have = !!g.passives[evo.needs], ready = !!evolutionFor(g, w)
+      draw(label(ready ? 'READY: NEXT LEVEL UP' : `LV 5 + ${PASSIVES[evo.needs].name} = ${evo.def.name}`, ready ? '#7dff8a' : have ? '#fff3a0' : '#8fa39a'), 80, y + 10)
+      draw(sprite(PASSIVES[evo.needs].icon, { grid: 8 }), 68, y + 9)
+    } else draw(label(w.def.desc, '#8fa39a'), 80, y + 10)
+  })
+  Object.entries(g.passives).forEach(([id, lv], i) => { draw(sprite(PASSIVES[id].icon), 262, 44 + i * 19); draw(label(`${PASSIVES[id].name} ${lv}`, '#ffffff'), 282, 46 + i * 19); draw(label(PASSIVES[id].desc, '#8fa39a'), 282, 54 + i * 19) })
+  centered(label('ESC: GO ON   M: SOUND   P: COLORS   Q: QUIT', '#cfe8d4'), 208)
 }
 
 /** The title: pick a hero, then a stage. Returns the boxes that can be clicked. */
@@ -235,7 +281,9 @@ export function drawTitle(state, now) {
   draw(label(h.from, '#8fa39a'), 290, 70)
   draw(sprite(WEAPONS[h.weapon].icon), 290, 80); draw(label(WEAPONS[h.weapon].name, '#ffd23f'), 308, 85)
   words(h.note, 104).forEach((l, i) => draw(label(l, '#cfe8d4'), 290, 100 + i * 8))
-  draw(label(`HP ${h.hp}  SPEED ${h.speed}`, '#8fa39a'), 290, 120)
+  draw(label(`HP ${h.hp}  SPEED ${h.speed}`, '#8fa39a'), 290, 118)
+  const evo = EVOLUTIONS[h.weapon]
+  if (evo) { draw(sprite(PASSIVES[evo.needs].icon, { grid: 8 }), 290, 127); draw(label(`= ${evo.def.name}`, '#fff3a0'), 300, 129) }
   // stage strip
   STAGES.forEach((s, i) => {
     const x = 28 + i * 118, y = 150, w = 110, hh = 40
@@ -246,6 +294,7 @@ export function drawTitle(state, now) {
     boxes.push(['stage', i, x, y, w, hh])
   })
   const hint = label('ARROWS: HERO  Q/E: STAGE  T: TALL  ENTER: START', '#ffffff')
+  centered(label('IN A RUN: SPACE DASHES - LEVEL 5 WEAPON + ITS PASSIVE EVOLVES', '#8fa39a'), 141)
   if (Math.floor(now * 2) % 2 || state.demo) centered(hint, 200)
   centered(label('EVERY PIXEL AND SOUND IS PIXSPELL CODE', '#6f8f78'), 213)
   return boxes

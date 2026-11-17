@@ -1,7 +1,8 @@
 // WORLDFALL: screens, input, the loop, and a demo that plays itself (?demo).
 import { audio, setPalette, PALETTES, palName } from './pix.js'
-import { HEROES, STAGES, WEAPONS, CLOSE } from './data.js'
-import { newGame, step, choose } from './game.js'
+import { HEROES, STAGES } from './data.js'
+import { newGame, step, choose, reroll } from './game.js'
+import { autopilot, autoChoose } from './pilot.js'
 import { W, H, setContext, drawWorld, drawHud, drawChoices, drawOver, drawPause, drawTitle, resetGround } from './render.js'
 
 const canvas = document.getElementById('game')
@@ -22,7 +23,7 @@ function start() {
   ui.screen = 'game'; ui.sel = 0
   audio.music(STAGES[ui.stage].music)
   const warm = Number(params.get('warm') ?? 0) // fast-forward that many seconds (recordings start mid-fight)
-  for (let t = 0; t < warm; t += 1 / 30) { step(g, 1 / 30, autopilot()); if (g.choices) autoChoose() }
+  for (let t = 0; t < warm; t += 1 / 30) { step(g, 1 / 30, autopilot(g)); if (g.choices) autoChoose(g) }
 }
 
 // ------------------------------------------------------------------ input
@@ -45,7 +46,8 @@ canvas.addEventListener('pointerdown', (e) => {
     if (hit?.[0] === 'stage') { if (ui.stage === hit[1]) start(); else ui.stage = hit[1]; return audio.sfx('select') }
     return
   }
-  if (g?.choices) { if (hit) choose(g, g.choices[hit[1]]); return }
+  if (g?.choices) { if (hit?.[0] === 'card') choose(g, g.choices[hit[1]]); else if (hit?.[0] === 'reroll') reroll(g); return }
+  if (hit?.[0] === 'dash') { g.wantDash = true; return }
   if (g?.over) return press('enter')
   stick = { x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 }
 })
@@ -68,6 +70,7 @@ function press(k) {
   if (!g) return
   if (g.choices) {
     if (/^[1-4]$/.test(k) && g.choices[Number(k) - 1]) return choose(g, g.choices[Number(k) - 1])
+    if (k === 'r') return reroll(g)
     if (k === 'arrowright' || k === 'd') ui.sel = (ui.sel + 1) % g.choices.length
     if (k === 'arrowleft' || k === 'a') ui.sel = (ui.sel + g.choices.length - 1) % g.choices.length
     if (k === 'enter' || k === ' ') { choose(g, g.choices[ui.sel] ?? g.choices[0]); ui.sel = 0 }
@@ -79,12 +82,13 @@ function press(k) {
     return
   }
   if (k === 'escape') { g.paused = !g.paused; return }
-  if (g.paused && k === 'q') toTitle()
+  if (g.paused && k === 'q') return toTitle()
+  if (k === ' ' || k === 'shift') g.wantDash = true
 }
 function toTitle() { ui.screen = 'title'; g = null; audio.music('title') }
 
 function input() {
-  if (demo) return autopilot()
+  if (demo) return autopilot(g)
   let dx = 0, dy = 0
   if (keys.has('arrowleft') || keys.has('a')) dx--
   if (keys.has('arrowright') || keys.has('d')) dx++
@@ -92,36 +96,6 @@ function input() {
   if (keys.has('arrowdown') || keys.has('s')) dy++
   if (stick && Math.hypot(stick.dx, stick.dy) > 8) { dx = stick.dx; dy = stick.dy }
   return dx || dy ? [dx, dy] : null
-}
-
-// ------------------------------------------------------------------ the demo: dodge the crowd, sweep up gems, circle
-function autopilot() {
-  if (!g) return null
-  const p = g.p
-  let vx = 0, vy = 0, close = null, cd = 1e9
-  for (const e of g.enemies) {
-    const dx = p.x - e.x, dy = p.y - e.y, d2 = dx * dx + dy * dy
-    if (d2 < cd) { cd = d2; close = e }
-    if (d2 < 70 * 70) { const w = (e.big ? 3 : 1) / Math.max(60, d2); vx += dx * w; vy += dy * w }
-  }
-  // keep the nearest one at fighting distance: back off when it's on you, step in when it's far, else circle it
-  if (close) {
-    const near = CLOSE.has(WEAPONS[g.hero.weapon].kind) ? 18 : 34, far = near * 2
-    const d = Math.sqrt(cd) || 1, ux = (close.x - p.x) / d, uy = (close.y - p.y) / d
-    if (d > far) { vx += ux * 0.02; vy += uy * 0.02 } else if (d > near) { vx += -uy * 0.015; vy += ux * 0.015 }
-  }
-  let best = null, bd = 1e9
-  for (const gem of g.gems) { const d = (gem.x - p.x) ** 2 + (gem.y - p.y) ** 2; if (d < bd) { bd = d; best = gem } }
-  for (const d of g.drops) { const dd = (d.x - p.x) ** 2 + (d.y - p.y) ** 2; if (dd < bd * 2) { bd = dd / 2; best = d } }
-  if (best && bd < 150 * 150) { const d = Math.sqrt(bd) || 1; vx += ((best.x - p.x) / d) * 0.01; vy += ((best.y - p.y) / d) * 0.01 }
-  const a = g.t * 0.35 // and keep drifting round in a slow circle, so the camera travels
-  vx += Math.cos(a) * 0.004; vy += Math.sin(a) * 0.004
-  return Math.hypot(vx, vy) > 0.0005 ? [vx, vy] : null
-}
-function autoChoose() {
-  const c = g.choices
-  const pickIt = c.find((x) => x.type === 'w' && x.lv === 1) ?? c.find((x) => x.type === 'w') ?? c[0]
-  choose(g, pickIt)
 }
 
 // ------------------------------------------------------------------ the loop
@@ -140,14 +114,14 @@ function tick(now) {
     ui.boxes = drawTitle(ui, t)
     if (demo && ui.t > 2.5) { if (fixed('stage', STAGES) == null) ui.stage = Math.floor(Math.random() * STAGES.length); start() }
   } else {
-    if (g.choices && demo) autoChoose()
+    if (g.choices && demo) autoChoose(g)
     step(g, dt, input())
     drawWorld(g, t)
     drawHud(g)
     ui.boxes = []
-    if (g.choices) ui.boxes = drawChoices(g, ui.sel).map((b, i) => ['card', i, ...b])
+    if (g.choices) ui.boxes = drawChoices(g, ui.sel, t)
     else if (g.over) { drawOver(g); if (demo && (g.overT = (g.overT ?? 0) + dt) > 5) { ui.t = 0; ui.hero = Math.floor(Math.random() * HEROES.length); ui.screen = 'title' } }
-    else if (g.paused) drawPause()
+    else if (g.paused) drawPause(g)
   }
 }
 

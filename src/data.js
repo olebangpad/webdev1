@@ -1,8 +1,8 @@
 // Everything the game is made of, as data. Every look is a PixSpell call: a character spec, a sprite id or an effect.
 
-/** Heroes: PixSpell's people from around the world, each with the weapon that fits how they fight. */
 /** How close a hero likes to fight (the demo pilot uses it): blades and orbits up close, the rest from range. */
-export const CLOSE = new Set(['arc', 'slam', 'orbit', 'aura'])
+export const CLOSE = new Set(['arc', 'slam', 'orbit', 'aura', 'sweep'])
+/** Heroes: PixSpell's people from around the world, each with the weapon that fits how they fight. */
 export const HEROES = [
   { id: 'samurai', from: 'JAPAN', weapon: 'katana', hp: 110, speed: 54, note: 'SLASHES WHAT IS IN FRONT' },
   { id: 'viking', from: 'SCANDINAVIA', weapon: 'quake', hp: 140, speed: 48, note: 'SHAKES THE GROUND AROUND' },
@@ -17,7 +17,7 @@ export const HEROES = [
 ]
 
 /**
- * Weapons. kind picks the behavior (weapons.js); dmg/cd at level 1; every level adds 25% damage and 6% speed, and
+ * Weapons. kind picks the behavior (game.js); dmg/cd at level 1; every level adds 25% damage and 6% speed, and
  * the levels listed in more add one more of whatever the weapon makes. icon: a sprite, fx: the effect it draws.
  */
 export const WEAPONS = {
@@ -25,9 +25,9 @@ export const WEAPONS = {
   rapier: { name: 'RAPIER', kind: 'arc', icon: 'held-sword', fx: 'stab', dmg: 8, cd: 0.33, reach: 22, size: 26, more: [2, 4], desc: 'FAST STABS' },
   pilum: { name: 'PILUM', kind: 'arc', icon: 'held-spear', fx: 'thrust', dmg: 16, cd: 0.95, reach: 40, size: 18, long: 72, more: [3, 5], desc: 'PIERCES A WHOLE ROW' },
   quake: { name: 'QUAKE AXE', kind: 'slam', icon: 'held-axe', fx: 'quake', dmg: 20, cd: 1.6, radius: 46, more: [], desc: 'SLAM AROUND YOU' },
-  fan: { name: 'PETAL FAN', kind: 'shot', icon: 'held-fan', fx: 'orb', el: 'nature', dmg: 10, cd: 0.75, speed: 130, homing: true, pierce: 1, more: [2, 3, 5], desc: 'SEEKING PETALS' },
+  fan: { name: 'PETAL FAN', kind: 'shot', icon: 'held-fan', fx: 'orb', el: 'arcane', dmg: 10, cd: 0.75, speed: 130, homing: true, pierce: 1, more: [2, 3, 5], desc: 'SEEKING PETALS' },
   arrows: { name: 'HORSE BOW', kind: 'shot', icon: 'held-bow', fx: 'arrow', dmg: 11, cd: 0.55, speed: 230, pierce: 1, more: [2, 4, 5], desc: 'ARROWS AT THE NEAREST' },
-  lightning: { name: 'STORM STAFF', kind: 'strike', icon: 'held-staff', fx: 'chain-lightning', el: 'arcane', dmg: 17, cd: 1.2, radius: 18, more: [2, 3, 4, 5], desc: 'LIGHTNING ON FOES' },
+  lightning: { name: 'STORM STAFF', kind: 'strike', icon: 'held-staff', fx: 'lightning', el: 'arcane', dmg: 17, cd: 1.2, radius: 18, more: [2, 3, 4, 5], desc: 'LIGHTNING ON FOES' },
   boomerang: { name: 'BOOMERANG', kind: 'boomerang', icon: 'held-boomerang', dmg: 13, cd: 1.15, speed: 160, more: [3, 5], desc: 'OUT AND BACK AGAIN' },
   sunbeam: { name: 'SUN BEAM', kind: 'strike', icon: 'held-khopesh', fx: 'holy-beam', el: 'holy', dmg: 24, cd: 1.5, radius: 22, more: [2, 4, 5], desc: 'BEAMS FROM THE SKY' },
   scrolls: { name: 'SPELL BOOKS', kind: 'orbit', icon: 'book-spell', sprite: 'book-spell', dmg: 11, cd: 0, radius: 30, spin: 3.6, more: [1, 2, 3, 4, 5], desc: 'BOOKS CIRCLE YOU' },
@@ -42,6 +42,26 @@ export const WEAPONS = {
   dragon: { name: 'DRAGON BREATH', kind: 'breath', icon: 'flame', fx: 'dragon-breath', el: 'fire', dmg: 6, cd: 3.0, life: 1.2, reach: 54, more: [], desc: 'FIRE IN FRONT' },
   void: { name: 'VOID ORB', kind: 'hole', icon: 'gem-onyx', fx: 'black-hole', el: 'dark', dmg: 6, cd: 6, radius: 50, life: 3, more: [], desc: 'PULLS THEM IN' },
 }
+
+/**
+ * Evolutions: a hero's weapon at level 5, held together with the passive it needs, can turn into something that
+ * plays differently (the next level-up offers it). def replaces the weapon's definition.
+ */
+export const EVOLUTIONS = {
+  katana: { needs: 'might', def: { name: 'MOON BLADE', kind: 'arc', icon: 'held-katana-white', fx: 'cross-slash', dmg: 20, cd: 0.8, reach: 26, size: 52, count: 2, wave: true, more: [], desc: 'CUTS BOTH WAYS AND THROWS CRESCENTS' } },
+  rapier: { needs: 'boots', def: { name: 'THOUSAND NEEDLES', kind: 'arc', icon: 'held-sword-crystal', fx: 'triple-slash', dmg: 9, cd: 0.3, reach: 30, size: 30, long: 62, fan: 3, more: [], desc: 'THREE LONG THRUSTS AT ONCE' } },
+  pilum: { needs: 'armor', def: { name: 'PHALANX', kind: 'arc', icon: 'held-spear-gold', fx: 'thrust', dmg: 20, cd: 0.95, reach: 40, size: 18, long: 84, star: 8, more: [], desc: 'SPEARS IN EIGHT DIRECTIONS' } },
+  quake: { needs: 'vigor', def: { name: 'RAGNAROK', kind: 'slam', icon: 'held-axe-gold', fx: 'quake', dmg: 26, cd: 1.5, radius: 58, aftershock: true, geysers: 3, more: [], desc: 'AFTERSHOCKS AND ERUPTIONS' } },
+  fan: { needs: 'haste', def: { name: 'BLOSSOM STORM', kind: 'shot', icon: 'held-fan-gold', fx: 'spinner', el: 'arcane', dmg: 12, cd: 0.8, speed: 150, homing: true, pierce: 3, burst: 8, more: [], desc: 'EIGHT SEEKING BLOSSOMS AT ONCE' } },
+  arrows: { needs: 'luck', def: { name: 'ARROW STORM', kind: 'shot', icon: 'held-bow-elven', fx: 'arrow', dmg: 13, cd: 0.5, speed: 260, pierce: 99, spread: 5, more: [], desc: 'FIVE ARROWS THROUGH EVERYTHING' } },
+  lightning: { needs: 'reach', def: { name: 'THUNDERSTORM', kind: 'strike', icon: 'held-staff-void', fx: 'lightning', el: 'arcane', dmg: 20, cd: 1.0, radius: 20, count: 3, chain: 4, field: true, more: [], desc: 'LIGHTNING JUMPS FROM FOE TO FOE' } },
+  boomerang: { needs: 'magnet', def: { name: 'STAR CHAKRAM', kind: 'boomerang', icon: 'held-boomerang-painted', dmg: 16, cd: 1.0, speed: 190, count: 3, wide: 12, gems: true, more: [], desc: 'THREE WIDE BLADES BRING GEMS BACK' } },
+  sunbeam: { needs: 'growth', def: { name: 'EYE OF RA', kind: 'sweep', icon: 'ring', fx: 'laser', el: 'holy', dmg: 9, cd: 0, reach: 110, spin: 2.4, beams: 2, more: [], desc: 'TWO SUN RAYS SWEEP AROUND YOU' } },
+  scrolls: { needs: 'regen', def: { name: 'LIVING LIBRARY', kind: 'orbit', icon: 'book-red', sprite: 'book-spell', sprite2: 'book-red', dmg: 13, cd: 0, radius: 30, spin: 3.6, count: 5, outer: 5, bolts: 1.0, more: [], desc: 'TWO RINGS OF BOOKS SHOOT BOLTS' } },
+}
+
+/** The dash (Space / Shift): a short burst of speed that nothing can hurt, then a wait. */
+export const DASH = { time: 0.16, speed: 4.2, cd: 2.4 }
 
 /** Passives: every level adds the step. */
 export const PASSIVES = {
@@ -110,4 +130,4 @@ export const STAGES = [
 ]
 
 export const RUN_SECONDS = 480 // the dragon comes at 7:30; beat it to win
-export const xpFor = (lv) => 3 + lv * 3 + Math.floor(lv * lv * 0.25)
+export const xpFor = (lv) => 3 + lv * 4 + Math.floor(lv * lv * 0.55)
