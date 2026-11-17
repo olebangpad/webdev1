@@ -1,7 +1,8 @@
 // Drawing: the ground, everyone on it, every effect, the HUD and the menus. Everything is a PixSpell image.
 import { spell, Pixmap, walk, walkMini, idle, fx, sprite, frames, white, big, label, color } from './pix.js'
-import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ELITES, STAGES, DASH } from './data.js'
+import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ELITES, UPGRADES, STAGES, DASH } from './data.js'
 import { evolutionFor } from './game.js'
+import { hasHero, levelOf, priceOf } from './meta.js'
 
 export const W = 400, H = 225
 const CHUNK = 32 // tiles per ground chunk (it repeats)
@@ -177,7 +178,7 @@ export function drawHud(g) {
   const t = label(mmss(g.t), '#ffffff', 2)
   draw(t, (W - t.w) / 2, 7)
   draw(label(`${g.kills}`, '#ffd23f'), W - 30, 15)
-  draw(label(`${g.gold}G`, '#ffd23f'), W - 30, 24)
+  draw(label(`${Math.round(g.gold)}G`, '#ffd23f'), W - 30, 24)
   g.weapons.forEach((w, i) => {
     if (w.evo) { ctx.fillStyle = color('#ffd23f'); ctx.globalAlpha = 0.35; ctx.fillRect(2 + i * 18, 6, 18, 18); ctx.globalAlpha = 1 }
     draw(sprite(w.def.icon), 3 + i * 18, 7)
@@ -249,13 +250,21 @@ function words(s, width) { // wrap pixel text by width (5 px font: 6 px a letter
   return out
 }
 
-export function drawOver(g) {
+/** The end of a run. result: what it paid (meta.js bank), or null in the demo. */
+export function drawOver(g, result) {
   dim(0.7)
-  centered(label(g.won ? 'VICTORY!' : 'YOU FELL', g.won ? '#ffd23f' : '#ff5a4a', 3), 40)
-  const lines = [`${heroName(g.hero.id)} OF ${g.hero.from}`, `${g.stage.name}  ${mmss(g.t)}`, `LEVEL ${g.lv}   ${g.kills} DEFEATED   ${g.gold} GOLD`]
-  lines.forEach((s, i) => centered(label(s, '#ffffff'), 78 + i * 12))
-  g.weapons.forEach((w, i) => { const icon = sprite(w.def.icon); draw(icon, (W - g.weapons.length * 20) / 2 + i * 20, 118) })
-  centered(label('ENTER: AGAIN   ESC: HEROES', '#cfe8d4'), 150)
+  centered(label(g.won ? 'VICTORY!' : 'YOU FELL', g.won ? '#ffd23f' : '#ff5a4a', 3), 28)
+  const lines = [`${heroName(g.hero.id)} OF ${g.hero.from}`, `${g.stage.name}  ${mmss(g.t)}`, `LEVEL ${g.lv}   ${g.kills} DEFEATED`]
+  lines.forEach((s, i) => centered(label(s, '#ffffff'), 62 + i * 11))
+  if (result?.record) centered(label(g.won ? 'FASTEST WIN HERE YET!' : 'YOUR LONGEST RUN HERE YET!', '#7dff8a'), 98)
+  g.weapons.forEach((w, i) => { const icon = sprite(w.def.icon); draw(icon, (W - g.weapons.length * 20) / 2 + i * 20, 110) })
+  if (result) {
+    const rows = [['FOUND', result.found], ['DEFEATED', result.kills], ['TIME', result.time], ...(result.win ? [['VICTORY', result.win]] : [])]
+    rows.forEach(([name, n], i) => { draw(label(name, '#8fa39a'), 150, 134 + i * 9); const v = label(`+${n}`, '#ffd23f'); draw(v, 250 - v.w, 134 + i * 9) })
+    const y = 134 + rows.length * 9 + 2
+    draw(sprite('coin', { grid: 8 }), 150, y - 1); draw(label('GOLD', '#ffffff'), 161, y + 1); const t = label(`+${result.total}`, '#ffd23f'); draw(t, 250 - t.w, y + 1)
+  }
+  centered(label('ENTER: AGAIN   ESC: HEROES AND UPGRADES', '#cfe8d4'), 196)
 }
 
 export function drawPause(g) {
@@ -277,7 +286,7 @@ export function drawPause(g) {
 }
 
 /** The title: pick a hero, then a stage. Returns the boxes that can be clicked. */
-export function drawTitle(state, now) {
+export function drawTitle(state, now, save) {
   const st = STAGES[state.stage]
   const gr = ground(st)
   ctx.drawImage(gr, (now * 12) % 256, 40, W, H, 0, 0, W, H)
@@ -288,19 +297,30 @@ export function drawTitle(state, now) {
   const boxes = []
   HEROES.forEach((h, i) => {
     const x = 28 + (i % 5) * 26, y = 52 + Math.floor(i / 5) * 32
-    const f = walk(heroSpec(h.id), 'down')
+    const f = walk(heroSpec(h.id), 'down'), mine = hasHero(save, h.id)
     if (i === state.hero) { ctx.fillStyle = color('#ffd23f'); ctx.globalAlpha = 0.3; ctx.fillRect(x - 1, y - 1, 26, 30); ctx.globalAlpha = 1 }
+    if (!mine) ctx.globalAlpha = 0.35
     draw(f[i === state.hero ? Math.floor(now * 8) % f.length : 0], x, y)
+    ctx.globalAlpha = 1
+    if (!mine) draw(sprite('lock', { grid: 8 }), x + 15, y + 15)
     boxes.push(['hero', i, x - 1, y - 1, 26, 30])
   })
+  // the bank, and the way to the upgrades
+  const gold = label(`${save.gold}`, '#ffd23f')
+  draw(sprite('coin', { grid: 8 }), W - 14, 5); draw(gold, W - 17 - gold.w, 7)
+  const up = label('U: UPGRADES', '#ffffff'), ux = W - up.w - 14
+  draw(panel(up.w + 10, 14), ux - 5, 16); draw(up, ux, 21)
+  boxes.push(['shop', 0, ux - 5, 16, up.w + 10, 14])
   const h = HEROES[state.hero], spec = { ...heroSpec(h.id), ...(state.tall ? { height: 24 } : {}) }
   const f = walk(spec, 'down'), img = f[Math.floor(now * 8) % f.length].scale(3)
   draw(img, 220, 128 - img.h)
-  draw(label(heroName(h.id), '#ffffff', 2), 290, 56)
+  const big = label(heroName(h.id), '#ffffff', 2)
+  draw(big.w <= W - 294 ? big : label(heroName(h.id), '#ffffff'), 290, big.w <= W - 294 ? 56 : 60) // long names in the small size
   draw(label(h.from, '#8fa39a'), 290, 70)
   draw(sprite(WEAPONS[h.weapon].icon), 290, 80); draw(label(WEAPONS[h.weapon].name, '#ffd23f'), 308, 85)
   words(h.note, 104).forEach((l, i) => draw(label(l, '#cfe8d4'), 290, 100 + i * 8))
-  draw(label(`HP ${h.hp}  SPEED ${h.speed}`, '#8fa39a'), 290, 118)
+  if (hasHero(save, h.id)) draw(label(`HP ${h.hp}  SPEED ${h.speed}`, '#8fa39a'), 290, 118)
+  else { draw(sprite('lock', { grid: 8 }), 290, 116); draw(label(`${h.cost} GOLD: ENTER`, save.gold >= h.cost ? '#7dff8a' : '#ff8a7a'), 301, 118) }
   const evo = EVOLUTIONS[h.weapon]
   if (evo) { draw(sprite(PASSIVES[evo.needs].icon, { grid: 8 }), 290, 127); draw(label(`= ${evo.def.name}`, '#fff3a0'), 300, 129) }
   // stage strip
@@ -310,11 +330,40 @@ export function drawTitle(state, now) {
     ctx.drawImage(thumb, 0, 0, w, hh, x, y, w, hh)
     if (i === state.stage) { ctx.strokeStyle = color('#ffd23f'); ctx.strokeRect(x + 0.5, y + 0.5, w - 1, hh - 1) } else { ctx.fillStyle = color('#0b0f14'); ctx.globalAlpha = 0.45; ctx.fillRect(x, y, w, hh); ctx.globalAlpha = 1 }
     const n = label(s.name, '#ffffff'); draw(n, x + (w - n.w) / 2, y + hh - 10)
+    const best = save.best[s.id]
+    if (best) { const b = label(`${best.won ? 'WON' : 'BEST'} ${mmss(best.time)}`, best.won ? '#ffd23f' : '#cfe8d4'); draw(b, x + (w - b.w) / 2, y + 3) }
     boxes.push(['stage', i, x, y, w, hh])
   })
-  const hint = label('ARROWS: HERO  Q/E: STAGE  T: TALL  ENTER: START', '#ffffff')
+  const hint = label(hasHero(save, h.id) ? 'ARROWS: HERO  Q/E: STAGE  T: TALL  ENTER: START' : 'ARROWS: HERO   ENTER: UNLOCK THIS HERO', '#ffffff')
   centered(label('IN A RUN: SPACE DASHES - LEVEL 5 WEAPON + ITS PASSIVE EVOLVES', '#8fa39a'), 141)
   if (Math.floor(now * 2) % 2 || state.demo) centered(hint, 200)
   centered(label('EVERY PIXEL AND SOUND IS PIXSPELL CODE', '#6f8f78'), 213)
+  return boxes
+}
+
+/** The upgrades gold buys for good. Returns the boxes that can be clicked. */
+export function drawShop(save, sel, now, stage = STAGES[0]) {
+  ctx.drawImage(ground(stage), (now * 12) % 256, 40, W, H, 0, 0, W, H)
+  dim(0.72)
+  centered(label('UPGRADES', '#ffd23f', 3), 8)
+  const gold = label(`${save.gold}`, '#ffd23f', 2)
+  draw(sprite('coin'), W - 22, 8); draw(gold, W - 26 - gold.w, 11)
+  const ids = Object.keys(UPGRADES), boxes = []
+  ids.forEach((id, i) => {
+    const up = UPGRADES[id], lv = levelOf(save, id), price = priceOf(save, id)
+    const x = 22 + (i % 2) * 182, y = 36 + Math.floor(i / 2) * 31, w = 174, h = 28
+    draw(panel(w, h), x, y)
+    if (i === sel) { ctx.strokeStyle = color('#ffd23f'); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1) }
+    draw(sprite(up.icon), x + 6, y + 6)
+    draw(label(up.name, '#ffffff'), x + 28, y + 5)
+    draw(label(up.desc, '#ffe9b0'), x + 28, y + 14)
+    for (let k = 0; k < up.max; k++) { ctx.fillStyle = color('#3a2f20'); ctx.fillRect(x + 27 + k * 8, y + 20, 7, 5); ctx.fillStyle = color(k < lv ? '#7dff8a' : '#8a7a58'); ctx.fillRect(x + 28 + k * 8, y + 21, 5, 3) }
+    const p = label(price == null ? 'MAX' : `${price}`, price == null ? '#cfe8d4' : save.gold >= price ? '#7dff8a' : '#ff8a7a')
+    draw(p, x + w - p.w - (price == null ? 8 : 18), y + 6)
+    if (price != null) draw(sprite('coin', { grid: 8 }), x + w - 15, y + 4)
+    boxes.push(['upgrade', i, x, y, w, h])
+  })
+  centered(label(`${save.runs} RUNS   ${save.wins} WON   ${save.kills} DEFEATED`, '#8fa39a'), 196)
+  centered(label('ARROWS: CHOOSE   ENTER: BUY   ESC: BACK', '#ffffff'), 208)
   return boxes
 }

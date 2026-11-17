@@ -1,9 +1,12 @@
 // WORLDFALL: screens, input, the loop, and a demo that plays itself (?demo).
 import { audio, setPalette, PALETTES, palName } from './pix.js'
 import { HEROES, STAGES } from './data.js'
+import { UPGRADES } from './data.js'
 import { newGame, step, choose, reroll } from './game.js'
 import { autopilot, autoChoose } from './pilot.js'
-import { W, H, setContext, drawWorld, drawHud, drawChoices, drawOver, drawPause, drawTitle, resetGround } from './render.js'
+import { hasHero, buyHero, buyUpgrade, bank } from './meta.js'
+import { loadSave, storeSave } from './save.js'
+import { W, H, setContext, drawWorld, drawHud, drawChoices, drawOver, drawPause, drawTitle, drawShop, resetGround } from './render.js'
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
@@ -13,12 +16,22 @@ setContext(ctx)
 const params = new URLSearchParams(location.search)
 const demo = params.has('demo')
 const fixed = (name, list) => { const v = params.get(name); const i = list.findIndex((x) => x.id === v); return i >= 0 ? i : null } // ?hero=viking&stage=frost
-const ui = { screen: 'title', hero: fixed('hero', HEROES) ?? Math.floor(Math.random() * HEROES.length), stage: fixed('stage', STAGES) ?? 0, tall: params.has('tall'), sel: 0, boxes: [], demo, t: 0 }
+const ui = { shopSel: 0, result: null, screen: 'title', hero: fixed('hero', HEROES) ?? Math.floor(Math.random() * HEROES.length), stage: fixed('stage', STAGES) ?? 0, tall: params.has('tall'), sel: 0, boxes: [], demo, t: 0 }
 let g = null
+// what lasts between runs; the demo plays with everything open and banks nothing
+const save = loadSave()
+if (demo) save.heroes = HEROES.map((h) => h.id)
+if (fixed('hero', HEROES) == null) { const mine = HEROES.map((h, i) => i).filter((i) => hasHero(save, HEROES[i].id)); ui.hero = mine[Math.floor(Math.random() * mine.length)] } // open on a hero you own
 
 function start() {
-  g = newGame(STAGES[ui.stage], HEROES[ui.hero].id, { sfx: (n, o, v) => audio.sfx(n, o, v) })
+  const hero = HEROES[ui.hero]
+  if (!hasHero(save, hero.id)) { // locked: Enter buys it, if the bank allows
+    if (buyHero(save, hero.id)) { storeSave(save); audio.sfx('unlock', undefined, 0.5) } else audio.sfx('error', undefined, 0.4)
+    return
+  }
+  g = newGame(STAGES[ui.stage], hero.id, { sfx: (n, o, v) => audio.sfx(n, o, v), upgrades: demo ? {} : save.upgrades })
   g.tall = ui.tall
+  ui.result = null
   if (demo) { g.stats.maxHp *= 4; g.p.hp = g.stats.maxHp; g.stats.armor += 2 } // the demo plays a long run
   ui.screen = 'game'; ui.sel = 0
   audio.music(STAGES[ui.stage].music)
@@ -44,6 +57,11 @@ canvas.addEventListener('pointerdown', (e) => {
   if (ui.screen === 'title') {
     if (hit?.[0] === 'hero') { if (ui.hero === hit[1]) start(); else ui.hero = hit[1]; return audio.sfx('select') }
     if (hit?.[0] === 'stage') { if (ui.stage === hit[1]) start(); else ui.stage = hit[1]; return audio.sfx('select') }
+    if (hit?.[0] === 'shop') { ui.screen = 'shop'; return audio.sfx('select') }
+    return
+  }
+  if (ui.screen === 'shop') {
+    if (hit?.[0] === 'upgrade') { if (ui.shopSel === hit[1]) buy(); else { ui.shopSel = hit[1]; audio.sfx('select') } } else if (!hit) { ui.screen = 'title' }
     return
   }
   if (g?.choices) { if (hit?.[0] === 'card') choose(g, g.choices[hit[1]]); else if (hit?.[0] === 'reroll') reroll(g); return }
@@ -64,7 +82,17 @@ function press(k) {
     if (k === 'e') ui.stage = (ui.stage + 1) % STAGES.length
     if (k === 'q') ui.stage = (ui.stage + STAGES.length - 1) % STAGES.length
     if (k === 't') ui.tall = !ui.tall
+    if (k === 'u') ui.screen = 'shop'
     if (k === 'enter' || k === ' ') return start()
+    return audio.sfx('select')
+  }
+  if (ui.screen === 'shop') {
+    const n = Object.keys(UPGRADES).length
+    if (k === 'arrowright' || k === 'd' || k === 'arrowleft' || k === 'a') ui.shopSel ^= 1
+    if (k === 'arrowdown' || k === 's') ui.shopSel = (ui.shopSel + 2) % n
+    if (k === 'arrowup' || k === 'w') ui.shopSel = (ui.shopSel + n - 2) % n
+    if (k === 'enter' || k === ' ') return buy()
+    if (k === 'escape' || k === 'u') ui.screen = 'title'
     return audio.sfx('select')
   }
   if (!g) return
@@ -86,6 +114,9 @@ function press(k) {
   if (k === ' ' || k === 'shift') g.wantDash = true
 }
 function toTitle() { ui.screen = 'title'; g = null; audio.music('title') }
+function buy() {
+  if (buyUpgrade(save, Object.keys(UPGRADES)[ui.shopSel])) { storeSave(save); audio.sfx('buy', undefined, 0.5) } else audio.sfx('error', undefined, 0.4)
+}
 
 function input() {
   if (demo) return autopilot(g)
@@ -111,8 +142,10 @@ function tick(now) {
   ui.t += dt
   ctx.fillStyle = '#0b0f14'; ctx.fillRect(0, 0, W, H)
   if (ui.screen === 'title') {
-    ui.boxes = drawTitle(ui, t)
+    ui.boxes = drawTitle(ui, t, save)
     if (demo && ui.t > 2.5) { if (fixed('stage', STAGES) == null) ui.stage = Math.floor(Math.random() * STAGES.length); start() }
+  } else if (ui.screen === 'shop') {
+    ui.boxes = drawShop(save, ui.shopSel, t, STAGES[ui.stage])
   } else {
     if (g.choices && demo) autoChoose(g)
     step(g, dt, input())
@@ -120,7 +153,11 @@ function tick(now) {
     drawHud(g)
     ui.boxes = []
     if (g.choices) ui.boxes = drawChoices(g, ui.sel, t)
-    else if (g.over) { drawOver(g); if (demo && (g.overT = (g.overT ?? 0) + dt) > 5) { ui.t = 0; ui.hero = Math.floor(Math.random() * HEROES.length); ui.screen = 'title' } }
+    else if (g.over) {
+      if (!ui.result && !demo) { ui.result = bank(save, g); storeSave(save) } // once: the run goes in the books
+      drawOver(g, ui.result)
+      if (demo && (g.overT = (g.overT ?? 0) + dt) > 5) { ui.t = 0; ui.hero = Math.floor(Math.random() * HEROES.length); ui.screen = 'title' }
+    }
     else if (g.paused) drawPause(g)
   }
 }

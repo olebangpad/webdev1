@@ -1,6 +1,6 @@
 // The run: a hero, waves of monsters, weapons that fire by themselves, gems, level-ups, bosses.
 // Pure simulation (no drawing): render.js draws whatever is in the game object, sfx() reports sounds.
-import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ENEMIES, ELITES, DASH, RUN_SECONDS, xpFor } from './data.js'
+import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ENEMIES, ELITES, UPGRADES, DASH, RUN_SECONDS, xpFor } from './data.js'
 
 const TAU = Math.PI * 2
 const rnd = (a, b) => a + Math.random() * (b - a)
@@ -8,7 +8,8 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
 const dist2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2
 const MAX_ENEMIES = 320
 
-export function newGame(stage, heroId, { sfx = () => {} } = {}) {
+/** upgrades: { id: level } bought between runs (meta.js); they shape the run before it starts. */
+export function newGame(stage, heroId, { sfx = () => {}, upgrades = {} } = {}) {
   const hero = HEROES.find((h) => h.id === heroId)
   const g = {
     stage, hero, sfx, t: 0, over: false, won: false, lv: 1, xp: 0, next: xpFor(1), kills: 0, gold: 0, levels: 0, choices: null, rerolls: 2,
@@ -19,6 +20,16 @@ export function newGame(stage, heroId, { sfx = () => {} } = {}) {
     hostile: [], dangers: [], // what monsters throw at you, and ground that is about to blow
     spawnT: 0, eliteT: 60, mimicT: 95, bossIndex: 0, boss: null, banner: null, shake: 0, grid: new Map(),
   }
+  for (const [id, lv] of Object.entries(upgrades)) { // what was bought for good
+    const up = UPGRADES[id], n = up ? up.step * Math.min(lv, up.max) : 0
+    if (!n) continue
+    if (up.stat === 'rerolls') g.rerolls += n
+    else if (up.stat === 'dash') g.dashCdMul = 1 - n
+    else if (up.stat === 'gold') g.goldMul = 1 + n
+    else if (up.stat === 'revives') g.revives = n
+    else g.stats[up.stat] += n
+  }
+  g.p.hp = g.stats.maxHp
   addWeapon(g, hero.weapon)
   return g
 }
@@ -87,7 +98,7 @@ export function choose(g, c) {
   else if (c.type === 'w') addWeapon(g, c.id)
   else if (c.type === 'p') addPassive(g, c.id)
   else if (c.type === 'heal') g.p.hp = g.stats.maxHp
-  else g.gold += 25
+  else g.gold += 25 * (g.goldMul ?? 1)
   g.choices = null
   g.levels--
   g.sfx('equip')
@@ -345,7 +356,15 @@ function hurt(g, raw) {
   g.numbers.push({ x: p.x, y: p.y - 26, n, hurt: true, t: 0 })
   g.shake = Math.max(g.shake, 0.12)
   g.sfx('hurt', undefined, 0.35)
-  if (p.hp <= 0) { p.hp = 0; g.over = true; g.sfx('lose', undefined, 0.6) }
+  if (p.hp <= 0 && g.revives > 0) { // a second wind: up again, and everything near is thrown back
+    g.revives--
+    p.hp = Math.ceil(g.stats.maxHp / 2); p.inv = 2; p.blink = 2
+    near(g, p.x, p.y, 90, (e) => damage(g, e, 40, { kx: e.x - p.x, ky: e.y - p.y, knock: 200 }))
+    g.fx.push({ name: 'revive', opts: { size: 64 }, x: p.x, y: p.y - 12, t: 0 }, { name: 'shockwave', opts: { size: 180, element: 'holy' }, x: p.x, y: p.y - 4, t: 0 })
+    g.banner = { text: 'SECOND WIND', t: 0.8 }
+    g.shake = 0.4
+    g.sfx('revive', undefined, 0.5)
+  } else if (p.hp <= 0) { p.hp = 0; g.over = true; g.sfx('lose', undefined, 0.6) }
   return true
 }
 
@@ -557,8 +576,8 @@ export function step(g, dt, move) {
     d.got = true
     if (d.kind === 'meat') { p.hp = Math.min(s.maxHp, p.hp + 30); g.sfx('heal', undefined, 0.4) }
     if (d.kind === 'compass') { for (const gem of g.gems) gem.pull = true; g.sfx('powerup', undefined, 0.4) }
-    if (d.kind === 'coin') { g.gold += 5; g.sfx('coin', undefined, 0.3) }
-    if (d.kind === 'chest') { g.levels++; g.gold += 20; g.sfx('chest', undefined, 0.5) }
+    if (d.kind === 'coin') { g.gold += 5 * (g.goldMul ?? 1); g.sfx('coin', undefined, 0.3) }
+    if (d.kind === 'chest') { g.levels++; g.gold += 20 * (g.goldMul ?? 1); g.sfx('chest', undefined, 0.5) }
   }
   g.drops = g.drops.filter((d) => !d.got)
   if (g.levels > 0 && !g.choices && !g.over) g.choices = makeChoices(g)

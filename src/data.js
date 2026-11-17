@@ -4,16 +4,16 @@
 export const CLOSE = new Set(['arc', 'slam', 'orbit', 'aura', 'sweep'])
 /** Heroes: PixSpell's people from around the world, each with the weapon that fits how they fight. */
 export const HEROES = [
-  { id: 'samurai', from: 'JAPAN', weapon: 'katana', hp: 130, speed: 56, note: 'SLASHES WHAT IS IN FRONT' },
-  { id: 'viking', from: 'SCANDINAVIA', weapon: 'quake', hp: 140, speed: 48, note: 'SHAKES THE GROUND AROUND' },
-  { id: 'hanbok', from: 'KOREA', weapon: 'fan', hp: 90, speed: 58, note: 'FANS OUT SEEKING PETALS' },
-  { id: 'deel', from: 'MONGOLIA', weapon: 'arrows', hp: 95, speed: 60, note: 'SHOOTS THE NEAREST FOE' },
-  { id: 'kente', from: 'GHANA', weapon: 'lightning', hp: 95, speed: 54, note: 'CALLS DOWN CHAIN LIGHTNING' },
-  { id: 'legionary', from: 'ROME', weapon: 'pilum', hp: 135, speed: 52, note: 'A SPEAR THAT PIERCES ROWS' },
-  { id: 'musketeer', from: 'FRANCE', weapon: 'rapier', hp: 120, speed: 60, note: 'QUICK STABS, MANY OF THEM' },
-  { id: 'outback', from: 'AUSTRALIA', weapon: 'boomerang', hp: 105, speed: 56, note: 'IT ALWAYS COMES BACK' },
-  { id: 'pharaoh', from: 'EGYPT', weapon: 'sunbeam', hp: 100, speed: 52, note: 'BEAMS OF THE SUN STRIKE' },
-  { id: 'seonbi', from: 'KOREA', weapon: 'scrolls', hp: 95, speed: 54, note: 'SPELL BOOKS CIRCLE AROUND' },
+  { id: 'samurai', cost: 0, from: 'JAPAN', weapon: 'katana', hp: 130, speed: 56, note: 'SLASHES WHAT IS IN FRONT' },
+  { id: 'viking', cost: 0, from: 'SCANDINAVIA', weapon: 'quake', hp: 140, speed: 48, note: 'SHAKES THE GROUND AROUND' },
+  { id: 'hanbok', cost: 0, from: 'KOREA', weapon: 'fan', hp: 90, speed: 58, note: 'FANS OUT SEEKING PETALS' },
+  { id: 'deel', cost: 0, from: 'MONGOLIA', weapon: 'arrows', hp: 95, speed: 60, note: 'SHOOTS THE NEAREST FOE' },
+  { id: 'kente', cost: 120, from: 'GHANA', weapon: 'lightning', hp: 95, speed: 54, note: 'CALLS DOWN CHAIN LIGHTNING' },
+  { id: 'legionary', cost: 160, from: 'ROME', weapon: 'pilum', hp: 135, speed: 52, note: 'A SPEAR THAT PIERCES ROWS' },
+  { id: 'musketeer', cost: 200, from: 'FRANCE', weapon: 'rapier', hp: 120, speed: 60, note: 'QUICK STABS, MANY OF THEM' },
+  { id: 'outback', cost: 260, from: 'AUSTRALIA', weapon: 'boomerang', hp: 105, speed: 56, note: 'IT ALWAYS COMES BACK' },
+  { id: 'pharaoh', cost: 320, from: 'EGYPT', weapon: 'sunbeam', hp: 100, speed: 52, note: 'BEAMS OF THE SUN STRIKE' },
+  { id: 'seonbi', cost: 400, from: 'KOREA', weapon: 'scrolls', hp: 95, speed: 54, note: 'SPELL BOOKS CIRCLE AROUND' },
 ]
 
 /**
@@ -58,6 +58,23 @@ export const EVOLUTIONS = {
   boomerang: { needs: 'magnet', def: { name: 'STAR CHAKRAM', kind: 'boomerang', icon: 'held-boomerang-painted', dmg: 16, cd: 1.0, speed: 190, count: 3, wide: 12, gems: true, more: [], desc: 'THREE WIDE BLADES BRING GEMS BACK' } },
   sunbeam: { needs: 'growth', def: { name: 'EYE OF RA', kind: 'sweep', icon: 'ring', fx: 'laser', el: 'holy', dmg: 9, cd: 0, reach: 110, spin: 2.4, beams: 2, more: [], desc: 'TWO SUN RAYS SWEEP AROUND YOU' } },
   scrolls: { needs: 'regen', def: { name: 'LIVING LIBRARY', kind: 'orbit', icon: 'book-red', sprite: 'book-spell', sprite2: 'book-red', dmg: 13, cd: 0, radius: 30, spin: 3.6, count: 5, outer: 5, bolts: 1.0, more: [], desc: 'TWO RINGS OF BOOKS SHOOT BOLTS' } },
+}
+
+/**
+ * What gold buys between runs, for good. Each level adds step to a stat of the next run (see applyMeta in game.js);
+ * the price of the next level is cost * (level + 1).
+ */
+export const UPGRADES = {
+  might: { name: 'MIGHT', icon: 'sword-gold', desc: '+5% DAMAGE', stat: 'might', step: 0.05, max: 5, cost: 40 },
+  health: { name: 'HEALTH', icon: 'heart', desc: '+10 MAX HP', stat: 'maxHp', step: 10, max: 5, cost: 30 },
+  armor: { name: 'ARMOR', icon: 'armor', desc: '-1 DAMAGE TAKEN', stat: 'armor', step: 1, max: 3, cost: 90 },
+  speed: { name: 'SPEED', icon: 'boots', desc: '+3% MOVE SPEED', stat: 'speed', step: 0.03, max: 5, cost: 30 },
+  magnet: { name: 'MAGNET', icon: 'compass', desc: '+15% PICKUP RANGE', stat: 'magnet', step: 0.15, max: 3, cost: 40 },
+  growth: { name: 'WISDOM', icon: 'crown', desc: '+4% EXPERIENCE', stat: 'growth', step: 0.04, max: 5, cost: 50 },
+  greed: { name: 'GREED', icon: 'coin', desc: '+15% GOLD', stat: 'gold', step: 0.15, max: 5, cost: 40 },
+  reroll: { name: 'REROLL', icon: 'dice', desc: '+1 REROLL A RUN', stat: 'rerolls', step: 1, max: 3, cost: 70 },
+  dash: { name: 'QUICK DASH', icon: 'feather', desc: '8% SHORTER DASH WAIT', stat: 'dash', step: 0.08, max: 3, cost: 60 },
+  revive: { name: 'SECOND WIND', icon: 'potion', desc: 'GET UP ONCE A RUN', stat: 'revives', step: 1, max: 1, cost: 400 },
 }
 
 /** The dash (Space / Shift): a short burst of speed that nothing can hurt, then a wait. */
