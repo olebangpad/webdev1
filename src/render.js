@@ -1,6 +1,6 @@
 // Drawing: the ground, everyone on it, every effect, the HUD and the menus. Everything is a PixSpell image.
-import { spell, Pixmap, walk, idle, fx, sprite, frames, white, big, label, color } from './pix.js'
-import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, STAGES, DASH } from './data.js'
+import { spell, Pixmap, walk, walkMini, idle, fx, sprite, frames, white, big, label, color } from './pix.js'
+import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ELITES, STAGES, DASH } from './data.js'
 import { evolutionFor } from './game.js'
 
 export const W = 400, H = 225
@@ -71,6 +71,13 @@ export function drawWorld(g, now) {
       rotated(f[Math.floor(now * 14) % f.length], z.x - cx + fx0 * z.r * 0.55, z.y - 8 - cy + fy0 * z.r * 0.55, Math.atan2(fy0, fx0))
     }
   }
+  // ground about to blow: a red ring that fills up
+  for (const z of g.dangers) {
+    const k = Math.min(1, z.t / z.delay), x = Math.round(z.x - cx), y = Math.round(z.y - cy)
+    ctx.fillStyle = 'rgba(255,60,40,0.16)'; ctx.beginPath(); ctx.ellipse(x, y, z.r, z.r * 0.8, 0, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = 'rgba(255,60,40,0.4)'; ctx.beginPath(); ctx.ellipse(x, y, z.r * k, z.r * 0.8 * k, 0, 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = 'rgba(255,90,70,0.9)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(x, y, z.r, z.r * 0.8, 0, 0, Math.PI * 2); ctx.stroke()
+  }
   for (const w of g.weapons) if (w.def.kind === 'aura') {
     const r = w.def.radius * g.stats.area * (1 + 0.12 * (w.lv - 1))
     const f = fx('aura', { size: Math.round(r * 2), element: 'holy' })
@@ -84,12 +91,24 @@ export function drawWorld(g, now) {
   const order = [...list, g.p].sort((a, b) => a.y - b.y)
   for (const e of order) {
     if (e === g.p) { drawHero(g, now, cx, cy); continue }
-    const key = e.kind + e.dir
-    let f = walk(e.def.spec, e.dir)
+    const key = e.kind + e.dir + (e.mini ? 'm' : '')
+    let f = e.mini ? walkMini(e.def.spec, e.dir) : walk(e.def.spec, e.dir)
     if (e.big) f = big(f, key)
-    if (e.flash > 0) f = white(f, key + (e.big ? 'B' : ''))
+    if (e.flash > 0 || (e.tell && Math.floor(now * 12) % 2)) f = white(f, key + (e.big ? 'B' : '')) // hit, or about to do something
     const img = f[(((Math.floor(now * (f.fps ?? 6) + e.x * 0.01)) % f.length) + f.length) % f.length] // a different step for each, never a negative index
-    draw(img, e.x - cx - f.origin[0], e.y - cy - f.origin[1])
+    const x = e.x - cx, y = e.y - cy
+    if (e.affix === 'armored') { const b = fx('barrier', { size: 56 }); ctx.globalAlpha = 0.7; drawCentered(b[Math.floor(now * 10) % b.length], x, y - 14); ctx.globalAlpha = 1 }
+    draw(img, x - f.origin[0], y - f.origin[1])
+    if (e.tell) draw(sprite('emote-alert', { grid: 8 }), x - 4, y - (e.big ? 44 : 24))
+    if (e.affix) { const t = label(ELITES[e.affix].name, ELITES[e.affix].color); draw(t, x - t.w / 2, y - 46) }
+  }
+  // what they threw: a dark ring around it, so it never looks like one of yours
+  for (const h of g.hostile) {
+    const x = Math.round(h.x - cx), y = Math.round(h.y - cy)
+    ctx.fillStyle = 'rgba(70,0,0,0.6)'; ctx.beginPath(); ctx.arc(x, y, 6.5, 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = Math.floor(now * 8) % 2 ? '#ff3b30' : '#ffb0a0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, 6.5, 0, Math.PI * 2); ctx.stroke()
+    const f = fx('orb', { size: 16, element: h.el })
+    drawCentered(f[Math.floor(now * 12) % f.length], x, y)
   }
   // what flies
   for (const s of g.shots) {

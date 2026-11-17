@@ -10,6 +10,8 @@ const once = (key, make) => (memo.has(key) ? memo.get(key) : (memo.set(key, make
 const k = (x) => JSON.stringify(x)
 
 export const walk = (spec, dir) => once('w' + k(spec) + dir, () => spell.walk(spec, dir))
+/** The same walk at half size (an 8 px grid): what a slime splits into. */
+export const walkMini = (spec, dir) => once('m' + k(spec) + dir, () => spell.walk(spec, dir, { grid: 8 }))
 export const idle = (spec) => once('i' + k(spec), () => spell.char.frames(spec))
 export const fx = (name, opts = {}) => once('x' + name + k(opts), () => spell.fx(name, opts))
 export const sprite = (id, opts = {}) => once('s' + id + k(opts), () => spell(id, opts))

@@ -24,7 +24,7 @@ export function autopilot(g) {
   // keep the nearest one at fighting distance: back off when it's on you, step in when it's far, else circle it
   const kind = g.weapons[0]?.def.kind ?? WEAPONS[g.hero.weapon].kind
   if (close) {
-    const near = close.r + (CLOSE.has(kind) ? 12 : 28), far = near + (CLOSE.has(kind) ? 14 : 30) // just out of its reach
+    const near = close.r + (CLOSE.has(kind) ? 16 : 28), far = near + (CLOSE.has(kind) ? 14 : 30) // just out of its reach
     const d = Math.sqrt(cd) || 1, ux = (close.x - p.x) / d, uy = (close.y - p.y) / d
     if (d > far) { vx += ux * 0.02; vy += uy * 0.02 } else if (d > near) { vx += -uy * 0.015; vy += ux * 0.015 }
   }

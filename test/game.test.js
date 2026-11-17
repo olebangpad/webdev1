@@ -91,3 +91,99 @@ test('the pilot gets through the first minutes of every stage', () => {
     assert.ok(g.lv >= 3 && g.kills > 30, `${stage.id}: level ${g.lv}, ${g.kills} kills`)
   }
 })
+
+// ------------------------------------------------------------------ monsters with minds of their own
+import { spawn } from '../src/game.js'
+const quiet = (stage = STAGES[0], hero = 'deel') => { // a run where nothing arrives by itself and the hero has no weapons
+  const g = newGame(stage, hero)
+  Object.assign(g, { weapons: [], eliteT: 1e9, mimicT: 1e9, bossIndex: 99, spawnAcc: -1e9, next: 1e9 })
+  return g
+}
+
+test('a charger stops, shows it, then rushes in a straight line', () => {
+  const g = quiet()
+  const wolf = spawn(g, 'wolf', null, { x: 80, y: 0 })
+  wolf.aiT = 0
+  step(g, 1 / 30, null)
+  assert.equal(wolf.state, 'wind')
+  const x0 = wolf.x
+  run(g, 0.4)
+  assert.ok(wolf.tell && Math.abs(wolf.x - x0) < 1, 'it stands still while it winds up')
+  run(g, 0.3)
+  assert.equal(wolf.state, 'charge')
+  const x1 = wolf.x
+  run(g, 0.2)
+  assert.ok(x1 - wolf.x > 20, `rushed ${(x1 - wolf.x).toFixed(0)} px in 0.2 s`)
+})
+
+test('a shooter keeps its distance and spits; what it spits hurts, and a dash goes through it', () => {
+  const g = quiet()
+  const shroom = spawn(g, 'shroom', null, { x: 60, y: 0 })
+  shroom.aiT = 0.1
+  run(g, 0.3)
+  assert.equal(g.hostile.length, 1)
+  assert.ok(shroom.x > 60, 'it backs away from someone this close')
+  const hp = g.p.hp
+  run(g, 2)
+  assert.ok(g.p.hp < hp, 'the spit landed')
+  // again, dashing through it
+  const g2 = quiet()
+  spawn(g2, 'shroom', null, { x: 60, y: 0 }).aiT = 0.1
+  run(g2, 0.5)
+  g2.wantDash = true
+  run(g2, 0.3, [1, 0])
+  assert.equal(g2.p.hp, g2.stats.maxHp)
+})
+
+test('an exploder lights a fuse next to you: step away, or stop it in time', () => {
+  const g = quiet()
+  const spider = spawn(g, 'spider', null, { x: 15, y: 0 })
+  step(g, 1 / 30, null)
+  assert.equal(spider.state, 'fuse')
+  assert.equal(g.dangers.length, 1)
+  run(g, 0.8)
+  assert.ok(g.p.hp < g.stats.maxHp, 'standing in it hurts')
+  // killed during the fuse: nothing blows
+  const g2 = quiet()
+  const s2 = spawn(g2, 'spider', null, { x: 15, y: 0 })
+  step(g2, 1 / 30, null)
+  addWeapon(g2, 'aura'); g2.weapons[0].def = { ...g2.weapons[0].def, dmg: 999 }; g2.weapons[0].t = 0
+  g2.p.inv = 0.3 // (so touching it doesn't count)
+  run(g2, 1)
+  assert.ok(s2.dead)
+  assert.equal(g2.p.hp, g2.stats.maxHp)
+})
+
+test('a slime comes apart into two small ones; an armored elite takes half', () => {
+  const g = quiet()
+  const slime = spawn(g, 'slime', null, { x: 100, y: 0 })
+  addWeapon(g, 'arrows'); g.weapons[0].def = { ...g.weapons[0].def, dmg: 999 }; g.weapons[0].t = 0
+  for (let i = 0; i < 60 && !slime.dead; i++) step(g, 1 / 30, null) // until the arrow lands
+  const minis = g.enemies.filter((e) => e.mini)
+  assert.equal(minis.length, 2)
+  assert.ok(minis.every((e) => e.r < 7 && e.xp === 1))
+  const g2 = quiet()
+  const plain = spawn(g2, 'golem', null, { x: 100, y: 0 }), hard = spawn(g2, 'golem', null, { x: -100, y: 0, affix: 'armored' })
+  addWeapon(g2, 'aura'); Object.assign(g2.weapons[0], { def: { ...g2.weapons[0].def, dmg: 100, radius: 200 }, t: 0 }); g2.stats.crit = 0
+  step(g2, 1 / 30, null)
+  assert.equal(plain.maxHp - plain.hp, 2 * (hard.maxHp - hard.hp))
+})
+
+test('every boss works through its moves, and each one shows before it lands', () => {
+  for (const [id, def] of Object.entries(ENEMIES).filter(([, d]) => d.boss)) {
+    const g = quiet()
+    g.p.hp = g.stats.maxHp = 1e6
+    const boss = spawn(g, id, null, { x: 120, y: 0 })
+    let dangers = 0, shots = 0, states = new Set(), early = 0
+    for (let t = 0; t < 30; t += 1 / 30) {
+      const before = g.p.hp
+      step(g, 1 / 30, null)
+      dangers = Math.max(dangers, g.dangers.length); shots = Math.max(shots, g.hostile.length); states.add(boss.state)
+      for (const z of g.dangers) if (z.t < 0.3 && before !== g.p.hp && (z.x - g.p.x) ** 2 + (z.y - g.p.y) ** 2 < z.r ** 2) early++
+    }
+    assert.ok(boss.move >= def.moves.length, `${id} used ${boss.move} moves`)
+    assert.ok(dangers + shots > 0, `${id} attacked`)
+    if (def.moves.includes('charge')) assert.ok(states.has('charge'), `${id} charged`)
+    if (def.moves.includes('summon')) assert.ok(g.enemies.length > 1, `${id} summoned`)
+  }
+})

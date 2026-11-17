@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Plays whole runs with the demo pilot, fast, to check balance: node scripts/sim.mjs [runs per hero] [stage]
+// Plays whole runs with the demo pilot, fast, to check balance: node scripts/sim.mjs [runs per hero] [stage|all] [hero,hero]
 // For every hero: how long it lasted, its level, when its weapon evolved, and what it carried at the end.
 import { HEROES, STAGES } from '../src/data.js'
 import { newGame, step } from '../src/game.js'
 import { autopilot, autoChoose } from '../src/pilot.js'
 
-const runs = Number(process.argv[2] ?? 2), only = process.argv[3]
+const runs = Number(process.argv[2] ?? 2), only = process.argv[3] === 'all' ? null : process.argv[3], who = process.argv[4]?.split(',')
 const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
 export function play(hero, stage, { maxSeconds = 600, dt = 1 / 30 } = {}) {
@@ -23,7 +23,7 @@ export function play(hero, stage, { maxSeconds = 600, dt = 1 / 30 } = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   for (const stage of STAGES.filter((s) => !only || s.id === only)) {
     console.log(`\n== ${stage.name}`)
-    for (const hero of HEROES) {
+    for (const hero of HEROES.filter((h) => !who || who.includes(h.id))) {
       const out = []
       for (let i = 0; i < runs; i++) {
         const { g, evoAt, peak } = play(hero, stage)

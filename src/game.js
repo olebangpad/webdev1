@@ -1,6 +1,6 @@
 // The run: a hero, waves of monsters, weapons that fire by themselves, gems, level-ups, bosses.
 // Pure simulation (no drawing): render.js draws whatever is in the game object, sfx() reports sounds.
-import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ENEMIES, DASH, RUN_SECONDS, xpFor } from './data.js'
+import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ENEMIES, ELITES, DASH, RUN_SECONDS, xpFor } from './data.js'
 
 const TAU = Math.PI * 2
 const rnd = (a, b) => a + Math.random() * (b - a)
@@ -16,7 +16,8 @@ export function newGame(stage, heroId, { sfx = () => {} } = {}) {
     stats: { might: 1, armor: 0, maxHp: hero.hp, haste: 0, area: 1, speed: 1, magnet: 1, crit: 0.05, growth: 1, regen: 0 },
     weapons: [], passives: {},
     enemies: [], shots: [], zones: [], fx: [], gems: [], drops: [], numbers: [],
-    spawnT: 0, eliteT: 60, bossIndex: 0, boss: null, banner: null, shake: 0, grid: new Map(),
+    hostile: [], dangers: [], // what monsters throw at you, and ground that is about to blow
+    spawnT: 0, eliteT: 60, mimicT: 95, bossIndex: 0, boss: null, banner: null, shake: 0, grid: new Map(),
   }
   addWeapon(g, hero.weapon)
   return g
@@ -96,10 +97,10 @@ export function choose(g, c) {
 function damage(g, e, amount, { kx = 0, ky = 0, knock = 40, el } = {}) {
   if (e.dead) return
   const crit = Math.random() < g.stats.crit
-  const n = Math.max(1, Math.round(amount * (crit ? 2 : 1)))
+  const n = Math.max(1, Math.round(amount * (crit ? 2 : 1) * (e.affix === 'armored' ? 0.5 : 1)))
   e.hp -= n
   e.flash = 0.08
-  if (!e.boss) { const l = Math.hypot(kx, ky) || 1; e.kx += (kx / l) * knock * (e.big ? 0.3 : 1); e.ky += (ky / l) * knock * (e.big ? 0.3 : 1) }
+  if (!e.boss && !e.def.steady && e.state !== 'charge') { const l = Math.hypot(kx, ky) || 1; e.kx += (kx / l) * knock * (e.big ? 0.3 : 1); e.ky += (ky / l) * knock * (e.big ? 0.3 : 1) }
   if (g.numbers.length < 70) g.numbers.push({ x: e.x + rnd(-4, 4), y: e.y - (e.big ? 34 : 18), n, crit, t: 0 })
   g.sfx(crit ? 'crit' : 'hit', el ? { element: el } : undefined, 0.18)
   if (e.hp <= 0) kill(g, e)
@@ -109,6 +110,12 @@ function kill(g, e) {
   g.kills++
   const v = e.xp
   g.gems.push({ x: e.x, y: e.y - 4, v, pull: false })
+  if (e.def.split && !e.mini && g.enemies.length < MAX_ENEMIES) for (let i = 0; i < e.def.split; i++) { // it comes apart into small ones
+    const m = spawn(g, e.kind, null, { x: e.x + rnd(-8, 8), y: e.y + rnd(-6, 6), mini: true })
+    m.kx = rnd(-60, 60); m.ky = rnd(-60, 60)
+  }
+  if (e.affix === 'volatile') danger(g, e.x, e.y, 46, 0.8, e.dmg * 1.6, 'boom')
+  if (e.kind === 'mimic') { for (let i = 0; i < 6; i++) g.drops.push({ kind: 'coin', x: e.x + rnd(-16, 16), y: e.y + rnd(-12, 12) }); g.drops.push({ kind: 'chest', x: e.x, y: e.y }); g.sfx('chest', undefined, 0.5) }
   if (e.big || e.boss) {
     g.drops.push({ kind: 'chest', x: e.x, y: e.y })
     g.fx.push({ name: 'boom', opts: { size: 64 }, x: e.x, y: e.y - 12, t: 0 })
@@ -301,16 +308,72 @@ function fire(g, w) {
 }
 
 // ------------------------------------------------------------------ monsters arrive
-function spawn(g, kind, at) {
+export function spawn(g, kind, at, { x, y, mini = false, affix } = {}) {
   const def = ENEMIES[kind], t = g.t
   const a = at ?? rnd(0, TAU), d = 240
-  const x = g.p.x + Math.cos(a) * d * 1.05, y = g.p.y + Math.sin(a) * d * 0.7
-  const hpMul = def.boss ? 1 : 1 + t / 260
-  g.enemies.push({
-    kind, def, x, y, hp: def.hp * hpMul, maxHp: def.hp * hpMul, speed: def.speed * (1 + t / 900) * rnd(0.9, 1.1), dmg: def.dmg, xp: def.xp,
-    r: def.big ? 14 : 7, kx: 0, ky: 0, flash: 0, slow: 0, dir: 'left', big: !!def.big, boss: !!def.boss, final: !!def.final, name: def.boss,
-  })
-  return g.enemies.at(-1)
+  x ??= g.p.x + Math.cos(a) * d * 1.05; y ??= g.p.y + Math.sin(a) * d * 0.7
+  const hpMul = (def.boss ? 1 : 1 + t / 260) * (mini ? 0.4 : 1)
+  const e = {
+    kind, def, x, y, hp: def.hp * hpMul, maxHp: def.hp * hpMul, speed: def.speed * (1 + t / 900) * rnd(0.9, 1.1) * (mini ? 1.25 : 1), dmg: def.dmg * (mini ? 0.6 : 1), xp: mini ? 1 : def.xp,
+    r: def.big ? 14 : mini ? 4 : 7, kx: 0, ky: 0, flash: 0, slow: 0, dir: 'left', big: !!def.big, boss: !!def.boss, final: !!def.final, name: def.boss, mini,
+    ai: def.ai, aiT: rnd(1.5, 3), state: null, tell: false, side: Math.random() < 0.5 ? 1 : -1, phase: rnd(0, TAU), move: 0,
+  }
+  if (affix) { // an elite's twist
+    e.affix = affix
+    if (affix === 'swift') e.speed *= 1.6
+    if (affix === 'summoner') e.sumT = 3
+  }
+  if (def.boss) e.aiT = 2.5
+  g.enemies.push(e)
+  return e
+}
+
+/** Ground that is about to blow: shown first, then it hurts whoever still stands on it. */
+function danger(g, x, y, r, delay, dmg, fx = 'boom', el) {
+  g.dangers.push({ x, y, r, delay, t: 0, dmg, fx, el })
+}
+/** Something thrown at you. */
+function throwAt(g, e, angle, speed = 70, el = e.def.shot ?? 'dark') {
+  g.hostile.push({ x: e.x, y: e.y - (e.big ? 16 : 8), vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, r: 4, dmg: e.dmg * 0.8, life: 4.5, el })
+}
+/** You get hurt (unless you can't be right now). raw: the monster's damage before time and armor. */
+function hurt(g, raw) {
+  const p = g.p
+  if (p.inv > 0 || g.over || raw <= 0) return false
+  const n = Math.max(1, Math.round(raw * Math.min(1.6, 0.5 + g.t / 300)) - g.stats.armor) // gentle at first, harder later
+  p.hp -= n; p.inv = 0.6; p.blink = 0.6; p.hurt = 0.2
+  g.numbers.push({ x: p.x, y: p.y - 26, n, hurt: true, t: 0 })
+  g.shake = Math.max(g.shake, 0.12)
+  g.sfx('hurt', undefined, 0.35)
+  if (p.hp <= 0) { p.hp = 0; g.over = true; g.sfx('lose', undefined, 0.6) }
+  return true
+}
+
+// What bosses do. Each returns how long the boss stands still for it; all of it shows on the ground first.
+const MOVES = {
+  slam(g, e) { danger(g, e.x, e.y, 62, 1.0, e.dmg * 1.6, 'quake'); return 1.1 },
+  boulders(g, e) { for (let i = 0; i < 6; i++) danger(g, g.p.x + rnd(-60, 60), g.p.y + rnd(-45, 45), 20, 0.7 + i * 0.16, e.dmg * 1.2, 'boom'); return 0.9 },
+  rain(g, e) { for (let i = 0; i < 9; i++) danger(g, g.p.x + rnd(-80, 80), g.p.y + rnd(-60, 60), 22, 0.7 + i * 0.14, e.dmg * 1.2, 'meteor', 'fire'); return 0.7 },
+  spikes(g, e) { return line(g, e, 7, 16, 'ice-spike', 'ice') },
+  breath(g, e) { return line(g, e, 6, 22, 'flame', 'fire') },
+  ring(g, e) { const n = e.final ? 16 : 12; for (let i = 0; i < n; i++) throwAt(g, e, (i / n) * TAU + e.phase, 60); e.phase += 0.26; g.sfx('magic', undefined, 0.3); return 0.5 },
+  fan(g, e) { const a = Math.atan2(g.p.y - e.y, g.p.x - e.x); for (let i = -2; i <= 2; i++) throwAt(g, e, a + i * 0.22, 85); g.sfx('magic', undefined, 0.3); return 0.5 },
+  summon(g, e) {
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU, x = e.x + Math.cos(a) * 34, y = e.y + Math.sin(a) * 26
+      spawn(g, e.def.minion, null, { x, y })
+      g.fx.push({ name: 'summon', opts: { size: 40, element: 'dark' }, x, y: y - 10, t: 0 })
+    }
+    g.sfx('summon', undefined, 0.4)
+    return 0.8
+  },
+  charge(g, e) { e.state = 'wind'; e.stateT = 0.7; return 0 },
+}
+/** A row of blasts from the boss toward you, one after another. */
+function line(g, e, n, r, fx, el) {
+  const a = Math.atan2(g.p.y - e.y, g.p.x - e.x)
+  for (let i = 1; i <= n; i++) danger(g, e.x + Math.cos(a) * i * r * 1.7, e.y + Math.sin(a) * i * r * 1.7, r, 0.55 + i * 0.1, e.dmg * 1.3, fx, el)
+  return 1.0
 }
 /** Monsters a second, t seconds into a run. */
 export const spawnRate = (t) => 0.9 + t / 45
@@ -326,7 +389,10 @@ function spawning(g, dt) {
   }
   // an elite every minute
   g.eliteT -= dt
-  if (g.eliteT <= 0) { g.eliteT = 55; spawn(g, pick(st.elites)) }
+  if (g.eliteT <= 0) { g.eliteT = 55; spawn(g, pick(st.elites), null, { affix: pick(Object.keys(ELITES)) }); g.sfx('roar', undefined, 0.3) }
+  // and now and then a chest with legs shows up, and runs
+  g.mimicT -= dt
+  if (g.mimicT <= 0) { g.mimicT = 110; const m = spawn(g, 'mimic', null, {}); m.x = g.p.x + (m.x - g.p.x) * 0.55; m.y = g.p.y + (m.y - g.p.y) * 0.55; m.fleeT = 22; g.banner = { text: 'A MIMIC!', t: 1.4, sub: 'CATCH IT FOR ITS GOLD' } }
   // a ring closing in, twice a run
   for (const at of [130, 330]) if (t - dt < at && t >= at) for (let i = 0; i < 36; i++) spawn(g, st.waves.findLast((wv) => wv[0] <= t)[1][0], (i / 36) * TAU)
   // the rest: more of them every minute (about one a second at first, ten a second at the end), in growing groups
@@ -381,26 +447,84 @@ export function step(g, dt, move) {
   if (s.regen) p.hp = Math.min(s.maxHp, p.hp + s.regen * dt)
   spawning(g, dt)
   rebuildGrid(g)
-  // monsters walk at you, get pushed back when hit, and don't pile onto one spot
+  // monsters come at you, each kind in its own way; they get pushed back when hit, and don't pile onto one spot
   for (const e of g.enemies) {
     if (e.dead) continue
     const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1
-    const sp = e.speed * (e.slow > 0 ? 0.45 : 1)
+    let mx = dx / d, my = dy / d, sp = e.speed * (e.slow > 0 ? 0.45 : 1)
     e.slow = Math.max(0, e.slow - dt)
-    e.x += (dx / d) * sp * dt + e.kx * dt; e.y += (dy / d) * sp * dt + e.ky * dt
+    e.tell = false
+    if (e.state === 'wind') { // about to rush: it stands still and shows it
+      sp = 0; e.tell = true
+      if ((e.stateT -= dt) <= 0) { e.state = 'charge'; e.stateT = e.boss ? 0.8 : 0.55; e.cx = mx; e.cy = my; g.sfx('dash', undefined, 0.2) }
+    } else if (e.state === 'charge') {
+      mx = e.cx; my = e.cy; sp = e.def.speed * (e.boss ? 4.2 : 3.4)
+      if ((e.stateT -= dt) <= 0) { e.state = 'rest'; e.stateT = e.boss ? 0.6 : 1.3 }
+    } else if (e.state === 'rest') {
+      sp *= 0.35
+      if ((e.stateT -= dt) <= 0) e.state = null
+    } else if (e.state === 'cast') { // a boss in the middle of a move
+      sp = 0
+      if ((e.stateT -= dt) <= 0) e.state = null
+    } else if (e.state === 'fuse') { // about to blow itself up
+      sp = 0; e.tell = true
+      if ((e.stateT -= dt) <= 0) { e.state = 'blown'; e.hp = 0; kill(g, e); continue }
+    } else if (e.boss) {
+      if ((e.aiT -= dt) <= 0) { // the next move in its list
+        const name = e.def.moves[e.move++ % e.def.moves.length]
+        const hold = MOVES[name](g, e)
+        if (hold) { e.state = 'cast'; e.stateT = hold }
+        e.aiT = (e.final ? 2.6 : 3.4) + hold
+      }
+    } else if (e.ai === 'zigzag') {
+      const w = Math.sin(g.t * 5 + e.phase) * 0.9
+      mx += -my * w; my += (dx / d) * w
+    } else if (e.ai === 'charger') {
+      if (d < 90 && (e.aiT -= dt) <= 0) { e.state = 'wind'; e.stateT = 0.5; e.aiT = rnd(2.5, 4) }
+    } else if (e.ai === 'shooter') { // it keeps its distance, circles, and spits
+      if (d < 75) { mx = -mx; my = -my; sp *= 0.7 } else if (d < 110) { const tx = -my * e.side; my = mx * e.side; mx = tx; sp *= 0.5 }
+      e.aiT -= dt
+      e.tell = e.aiT < 0.45 && d < 200 && g.hostile.length < 8 + g.t / 60
+      if (e.aiT <= 0) { // only so much in the air at once: a crowd of spitters must stay dodgeable
+        e.aiT = rnd(2.6, 3.6)
+        if (d < 200 && g.hostile.length < 8 + g.t / 60) { throwAt(g, e, Math.atan2(dy - 8, dx)); g.sfx('throw', undefined, 0.12) }
+      }
+    } else if (e.ai === 'exploder') {
+      if (d < 20) { e.state = 'fuse'; e.stateT = 0.6; danger(g, e.x, e.y, 30, 0.6, e.dmg * 1.5, 'boom', undefined); g.dangers.at(-1).owner = e }
+    } else if (e.ai === 'runner') { // the mimic: away from you, until it gives up and digs in
+      mx = -mx; my = -my
+      if ((e.fleeT -= dt) <= 0 && d > 150) { e.dead = true; continue }
+      if (d > 170) sp *= 0.3
+    }
+    if (e.affix === 'summoner' && (e.sumT -= dt) <= 0 && g.enemies.length < MAX_ENEMIES) { // an elite that calls for help
+      e.sumT = 5
+      const kinds = g.stage.waves.findLast((wv) => wv[0] <= g.t)[1]
+      for (let i = 0; i < 3; i++) { const a = rnd(0, TAU), x = e.x + Math.cos(a) * 26, y = e.y + Math.sin(a) * 20; spawn(g, kinds[0], null, { x, y }); g.fx.push({ name: 'summon', opts: { size: 40, element: 'dark' }, x, y: y - 10, t: 0 }) }
+    }
+    e.x += mx * sp * dt + e.kx * dt; e.y += my * sp * dt + e.ky * dt
     e.kx *= Math.pow(0.02, dt); e.ky *= Math.pow(0.02, dt)
     e.flash = Math.max(0, e.flash - dt)
-    e.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up'
-    if (d > 420 && !e.boss) { e.x = p.x - dx * 0.95; e.y = p.y - dy * 0.95 } // fell too far behind: come round the other side
-    if (d < e.r + 6 && p.inv <= 0) {
-      const n = Math.max(1, Math.round(e.dmg * Math.min(1.6, 0.5 + g.t / 300)) - s.armor) // gentle at first, harder later
-      p.hp -= n; p.inv = 0.6; p.blink = 0.6; p.hurt = 0.2
-      g.numbers.push({ x: p.x, y: p.y - 26, n, hurt: true, t: 0 })
-      g.shake = Math.max(g.shake, 0.12)
-      g.sfx('hurt', undefined, 0.35)
-      if (p.hp <= 0) { p.hp = 0; g.over = true; g.sfx('lose', undefined, 0.6) }
-    }
+    const fx0 = e.state === 'charge' ? e.cx : dx, fy0 = e.state === 'charge' ? e.cy : dy
+    e.dir = Math.abs(fx0) > Math.abs(fy0) ? (fx0 > 0 ? 'right' : 'left') : fy0 > 0 ? 'down' : 'up'
+    if (d > 420 && !e.boss && e.ai !== 'runner') { e.x = p.x - dx * 0.95; e.y = p.y - dy * 0.95 } // fell too far behind: come round the other side
+    if (d < e.r + 6) hurt(g, e.dmg * (e.state === 'charge' ? 1.4 : 1))
   }
+  // what they threw
+  for (const h of g.hostile) {
+    h.x += h.vx * dt; h.y += h.vy * dt; h.life -= dt
+    if ((h.x - p.x) ** 2 + (h.y - (p.y - 8)) ** 2 < (h.r + 5) ** 2 && p.inv <= 0) { hurt(g, h.dmg); h.life = 0 }
+  }
+  g.hostile = g.hostile.filter((h) => h.life > 0)
+  // ground that was marked blows
+  for (const z of g.dangers) {
+    if (z.owner?.dead && z.owner.state !== 'blown') { z.t = z.delay + 1; continue } // whoever lit it was stopped in time
+    if ((z.t += dt) < z.delay) continue
+    g.fx.push({ name: z.fx, opts: { size: Math.round(z.r * 2.4), ...(z.el ? { element: z.el } : {}) }, x: z.x, y: z.y - (z.fx === 'meteor' || z.fx === 'flame' || z.fx === 'ice-spike' ? z.r * 0.6 : 4), t: 0 })
+    if (z.r > 40) g.shake = Math.max(g.shake, 0.2)
+    g.sfx(z.fx === 'ice-spike' ? 'ice' : z.fx === 'quake' ? 'quake' : 'boom', undefined, 0.25)
+    if ((z.x - p.x) ** 2 + (z.y - p.y) ** 2 < (z.r + 3) ** 2) hurt(g, z.dmg)
+  }
+  g.dangers = g.dangers.filter((z) => z.t < z.delay)
   for (const [, c] of g.grid) { // a little push apart within each cell
     if (c.length < 2) continue
     for (let i = 0; i < c.length; i++) for (let j = i + 1; j < Math.min(c.length, i + 5); j++) {
