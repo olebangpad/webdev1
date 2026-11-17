@@ -187,3 +187,24 @@ test('every boss works through its moves, and each one shows before it lands', (
     if (def.moves.includes('summon')) assert.ok(g.enemies.length > 1, `${id} summoned`)
   }
 })
+
+// ------------------------------------------------------------------ Korean
+import { tr } from '../src/ko.js'
+import { UPGRADES, ELITES } from '../src/data.js'
+test('everything named in the data has its Korean', () => {
+  const missing = []
+  const need = (s) => { if (!tr(s)) missing.push(s) }
+  for (const h of HEROES) { need(h.from); need(h.note) }
+  for (const w of Object.values(WEAPONS)) { need(w.name); need(w.desc) }
+  for (const e of Object.values(EVOLUTIONS)) { need(e.def.name); need(e.def.desc) }
+  for (const p of [...Object.values(PASSIVES), ...Object.values(UPGRADES)]) { need(p.name); need(p.desc) }
+  for (const e of Object.values(ENEMIES)) if (e.boss) need(e.boss)
+  for (const e of Object.values(ELITES)) need(e.name)
+  for (const s of STAGES) need(s.name)
+  assert.deepEqual(missing, [])
+  assert.equal(tr('SAMURAI OF JAPAN'), '일본의 사무라이')
+  assert.equal(tr('= EYE OF RA'), '= 라의 눈')
+  assert.equal(tr('LV 5 + MIGHT = MOON BLADE'), '5레벨 + 힘 = 월광검')
+  assert.equal(tr('WORLDFALL'), null, 'the logo stays as it is')
+  assert.equal(tr('1234'), null)
+})

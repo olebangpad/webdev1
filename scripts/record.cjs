@@ -10,7 +10,7 @@ const { mkdtempSync, rmSync } = require('node:fs')
 const { join } = require('node:path')
 const os = require('node:os')
 
-const URL = process.env.URL ?? 'http://127.0.0.1:8770/webdev1/index.html?local&demo&warm=236&stage=meadow&hero=viking'
+const URL = process.env.URL ?? 'http://127.0.0.1:8770/webdev1/index.html?local&demo&lang=en&warm=233&stage=meadow&hero=viking'
 const SECONDS = Number(process.env.SECONDS ?? 7), FPS = 10
 ;(async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'worldfall-'))

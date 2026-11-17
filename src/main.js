@@ -1,19 +1,22 @@
 // WORLDFALL: screens, input, the loop, and a demo that plays itself (?demo).
-import { audio, setPalette, PALETTES, palName } from './pix.js'
+import { audio, setPalette, PALETTES, palName, lang, setLang } from './pix.js'
 import { HEROES, STAGES } from './data.js'
 import { UPGRADES } from './data.js'
 import { newGame, step, choose, reroll } from './game.js'
 import { autopilot, autoChoose } from './pilot.js'
 import { hasHero, buyHero, buyUpgrade, bank } from './meta.js'
 import { loadSave, storeSave } from './save.js'
-import { W, H, setContext, drawWorld, drawHud, drawChoices, drawOver, drawPause, drawTitle, drawShop, resetGround } from './render.js'
+import { W, H, setContext, drawWorld, drawHud, drawChoices, drawOver, drawPause, drawTitle, drawShop, drawTouch, resetGround } from './render.js'
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
-canvas.width = W; canvas.height = H
-setContext(ctx)
 
 const params = new URLSearchParams(location.search)
+// language: ?lang=ko, or what was chosen last time (L), or the browser's
+const stored = (() => { try { return localStorage.getItem('worldfall.lang') } catch { return null } })()
+setLang(params.get('lang') ?? stored ?? ((navigator.language ?? '').startsWith('ko') ? 'ko' : 'en'))
+document.fonts?.load("16px 'DungGeunMo'").then(() => setLang(lang), () => {}) // draw Korean again once its font is in
+function toggleLang() { setLang(lang === 'ko' ? 'en' : 'ko'); try { localStorage.setItem('worldfall.lang', lang) } catch { /* not remembered */ } }
 const demo = params.has('demo')
 const fixed = (name, list) => { const v = params.get(name); const i = list.findIndex((x) => x.id === v); return i >= 0 ? i : null } // ?hero=viking&stage=frost
 const ui = { shopSel: 0, result: null, screen: 'title', hero: fixed('hero', HEROES) ?? Math.floor(Math.random() * HEROES.length), stage: fixed('stage', STAGES) ?? 0, tall: params.has('tall'), sel: 0, boxes: [], demo, t: 0 }
@@ -52,28 +55,39 @@ addEventListener('blur', () => keys.clear())
 const toCanvas = (e) => { const r = canvas.getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)] }
 canvas.addEventListener('pointerdown', (e) => {
   audio.unlock()
+  if (e.pointerType === 'touch') ui.touch = true
   const [x, y] = toCanvas(e)
   const hit = ui.boxes.find(([, , bx, by, bw, bh]) => x >= bx && x < bx + bw && y >= by && y < by + bh)
   if (ui.screen === 'title') {
     if (hit?.[0] === 'hero') { if (ui.hero === hit[1]) start(); else ui.hero = hit[1]; return audio.sfx('select') }
     if (hit?.[0] === 'stage') { if (ui.stage === hit[1]) start(); else ui.stage = hit[1]; return audio.sfx('select') }
     if (hit?.[0] === 'shop') { ui.screen = 'shop'; return audio.sfx('select') }
+    if (hit?.[0] === 'start') return start()
+    if (hit?.[0] === 'tall') { ui.tall = !ui.tall; return audio.sfx('select') }
+    if (hit?.[0] === 'lang') { toggleLang(); return audio.sfx('select') }
     return
   }
   if (ui.screen === 'shop') {
+    if (hit?.[0] === 'back') { ui.screen = 'title'; return audio.sfx('select') }
     if (hit?.[0] === 'upgrade') { if (ui.shopSel === hit[1]) buy(); else { ui.shopSel = hit[1]; audio.sfx('select') } } else if (!hit) { ui.screen = 'title' }
     return
   }
   if (g?.choices) { if (hit?.[0] === 'card') choose(g, g.choices[hit[1]]); else if (hit?.[0] === 'reroll') reroll(g); return }
   if (hit?.[0] === 'dash') { g.wantDash = true; return }
+  if (hit?.[0] === 'again') return start()
+  if (hit?.[0] === 'resume') { g.paused = false; return }
+  if (hit?.[0] === 'title') return toTitle()
   if (g?.over) return press('enter')
-  stick = { x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 }
+  if (hit?.[0] === 'pause') { g.paused = !g.paused; return }
+  if (g?.paused) { g.paused = false; return }
+  stick = { id: e.pointerId, x0: x, y0: y, dx: 0, dy: 0 } // where the finger went down, in game pixels
 })
-addEventListener('pointermove', (e) => { if (stick) { stick.dx = e.clientX - stick.x0; stick.dy = e.clientY - stick.y0 } })
-addEventListener('pointerup', () => { stick = null })
+addEventListener('pointermove', (e) => { if (stick && e.pointerId === stick.id) { const [x, y] = toCanvas(e); stick.dx = x - stick.x0; stick.dy = y - stick.y0 } })
+for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, (e) => { if (stick && e.pointerId === stick.id) stick = null })
 
 function press(k) {
   if (k === 'm') return audio.toggle()
+  if (k === 'l') return toggleLang()
   if (k === 'p') { setPalette(PALETTES[(PALETTES.indexOf(palName) + 1) % PALETTES.length]); return resetGround() }
   if (ui.screen === 'title') {
     if (k === 'arrowright' || k === 'd') ui.hero = (ui.hero + 1) % HEROES.length
@@ -125,7 +139,7 @@ function input() {
   if (keys.has('arrowright') || keys.has('d')) dx++
   if (keys.has('arrowup') || keys.has('w')) dy--
   if (keys.has('arrowdown') || keys.has('s')) dy++
-  if (stick && Math.hypot(stick.dx, stick.dy) > 8) { dx = stick.dx; dy = stick.dy }
+  if (stick && Math.hypot(stick.dx, stick.dy) > 4) { dx = stick.dx; dy = stick.dy }
   return dx || dy ? [dx, dy] : null
 }
 
@@ -151,14 +165,14 @@ function tick(now) {
     step(g, dt, input())
     drawWorld(g, t)
     drawHud(g)
-    ui.boxes = []
+    ui.boxes = ui.touch && !g.choices && !g.over && !g.paused ? drawTouch(g, stick) : []
     if (g.choices) ui.boxes = drawChoices(g, ui.sel, t)
     else if (g.over) {
       if (!ui.result && !demo) { ui.result = bank(save, g); storeSave(save) } // once: the run goes in the books
-      drawOver(g, ui.result)
+      ui.boxes = drawOver(g, ui.result)
       if (demo && (g.overT = (g.overT ?? 0) + dt) > 5) { ui.t = 0; ui.hero = Math.floor(Math.random() * HEROES.length); ui.screen = 'title' }
     }
-    else if (g.paused) drawPause(g)
+    else if (g.paused) ui.boxes = drawPause(g)
   }
 }
 
@@ -166,6 +180,9 @@ function fit() {
   const s = Math.min(innerWidth / W, (innerHeight - 40) / H)
   const z = s >= 2 ? Math.floor(s) : s // whole pixels when there's room; on a phone, as big as it fits
   canvas.style.width = `${Math.round(W * z)}px`; canvas.style.height = `${Math.round(H * z)}px`
+  const k = Math.max(1, Math.min(4, Math.ceil(z * (devicePixelRatio || 1)))) // device pixels to one game pixel
+  canvas.width = W * k; canvas.height = H * k
+  setContext(ctx, k)
 }
 addEventListener('resize', fit)
 fit()

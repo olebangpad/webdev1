@@ -1,5 +1,6 @@
 // Drawing: the ground, everyone on it, every effect, the HUD and the menus. Everything is a PixSpell image.
-import { spell, Pixmap, walk, walkMini, idle, fx, sprite, frames, white, big, label, color } from './pix.js'
+import { spell, Pixmap, walk, walkMini, idle, fx, sprite, frames, white, big, label, rawKo, koWidth, lang, setScale, color } from './pix.js'
+import { tr } from './ko.js'
 import { HEROES, WEAPONS, PASSIVES, EVOLUTIONS, ELITES, UPGRADES, STAGES, DASH } from './data.js'
 import { evolutionFor } from './game.js'
 import { hasHero, levelOf, priceOf } from './meta.js'
@@ -8,8 +9,10 @@ export const W = 400, H = 225
 const CHUNK = 32 // tiles per ground chunk (it repeats)
 
 let ctx
-export function setContext(c) { ctx = c; ctx.imageSmoothingEnabled = false }
-const draw = (img, x, y) => ctx.drawImage(img.canvas, Math.round(x), Math.round(y))
+/** k: device pixels to one game pixel. Everything is drawn in game pixels; the canvas is k times finer, so pixel art
+ * stays crisp and Korean text can use the screen's full resolution. */
+export function setContext(c, k = 1) { ctx = c; ctx.setTransform(k, 0, 0, k, 0, 0); ctx.imageSmoothingEnabled = false; setScale(k) }
+const draw = (img, x, y) => ctx.drawImage(img.canvas, Math.round(x), Math.round(y), img.w, img.h) // w, h: Korean text is drawn finer than one game pixel
 const drawCentered = (img, x, y) => draw(img, x - img.w / 2, y - img.h / 2)
 const heroSpec = (id) => spell.char.world.find((w) => w.id === id).spec
 export const heroName = (id) => spell.char.world.find((w) => w.id === id).name.toUpperCase()
@@ -185,7 +188,7 @@ export function drawHud(g) {
     draw(label(w.evo ? '*' : w.lv, '#ffd23f'), 13 + i * 18, 17)
   })
   Object.entries(g.passives).forEach(([id, lv], i) => { draw(sprite(PASSIVES[id].icon, { grid: 8 }), 3 + i * 12, 27); draw(label(lv, '#cfe8d4'), 9 + i * 12, 31) })
-  if (g.boss && !g.boss.dead) {
+  if (g.boss && !g.boss.dead && !g.over && !g.paused) {
     const bw = 200, x = (W - bw) / 2, y = H - 14
     ctx.fillStyle = color('#10141a'); ctx.fillRect(x - 1, y - 1, bw + 2, 6)
     ctx.fillStyle = color('#ff4fd8'); ctx.fillRect(x, y, Math.round((bw * g.boss.hp) / g.boss.maxHp), 4)
@@ -223,7 +226,8 @@ export function drawChoices(g, sel, now = 0) {
       draw(icon, x + (cw - icon.w) / 2, y + 8)
       const name = label(def.name, '#ffffff'); draw(name, x + (cw - name.w) / 2, y + 44)
       const lv = label(evo ? 'EVOLVE!' : c.lv === 1 ? 'NEW!' : `LV ${c.lv}`, evo ? '#fff3a0' : c.lv === 1 ? '#7dff8a' : '#ffd23f'); draw(lv, x + (cw - lv.w) / 2, y + 54)
-      words(def.desc, cw - 10).forEach((line, j) => { const l = label(line, '#cfe8d4'); draw(l, x + (cw - l.w) / 2, y + 66 + j * 8) })
+      const [lines, lh] = para(def.desc, cw - 10, '#cfe8d4')
+      lines.forEach((l, j) => draw(l, x + (cw - l.w) / 2, y + 66 + j * lh))
       // what it takes to evolve: the weapon and the passive that go together
       const pair = c.type === 'w' && EVOLUTIONS[c.id] && !g.weapons.find((w) => w.id === c.id)?.evo ? [PASSIVES[EVOLUTIONS[c.id].needs].icon, !!g.passives[EVOLUTIONS[c.id].needs]]
         : c.type === 'p' ? (() => { const w = g.weapons.find((w) => EVOLUTIONS[w.id]?.needs === c.id && !w.evo); return w ? [w.def.icon, true] : null })() : null
@@ -249,6 +253,15 @@ function words(s, width) { // wrap pixel text by width (5 px font: 6 px a letter
   if (line) out.push(line)
   return out
 }
+/** A paragraph as lines of text images, wrapped to width, in the language in use. Returns [images, line height]. */
+function para(s, width, hex) {
+  const ko = lang === 'ko' ? tr(s) : null
+  if (!ko) return [words(s, width).map((l) => label(l, hex)), 8]
+  const out = []; let line = ''
+  for (const w of ko.split(' ')) { const next = (line + ' ' + w).trim(); if (line && koWidth(next) > width) { out.push(line); line = w } else line = next }
+  if (line) out.push(line)
+  return [out.map((l) => rawKo(l, hex)), 10]
+}
 
 /** The end of a run. result: what it paid (meta.js bank), or null in the demo. */
 export function drawOver(g, result) {
@@ -260,11 +273,19 @@ export function drawOver(g, result) {
   g.weapons.forEach((w, i) => { const icon = sprite(w.def.icon); draw(icon, (W - g.weapons.length * 20) / 2 + i * 20, 110) })
   if (result) {
     const rows = [['FOUND', result.found], ['DEFEATED', result.kills], ['TIME', result.time], ...(result.win ? [['VICTORY', result.win]] : [])]
-    rows.forEach(([name, n], i) => { draw(label(name, '#8fa39a'), 150, 134 + i * 9); const v = label(`+${n}`, '#ffd23f'); draw(v, 250 - v.w, 134 + i * 9) })
-    const y = 134 + rows.length * 9 + 2
+    rows.forEach(([name, n], i) => { draw(label(name, '#8fa39a'), 150, 130 + i * 11); const v = label(`+${n}`, '#ffd23f'); draw(v, 250 - v.w, 132 + i * 11) })
+    const y = 130 + rows.length * 11 + 1
     draw(sprite('coin', { grid: 8 }), 150, y - 1); draw(label('GOLD', '#ffffff'), 161, y + 1); const t = label(`+${result.total}`, '#ffd23f'); draw(t, 250 - t.w, y + 1)
   }
-  centered(label('ENTER: AGAIN   ESC: HEROES AND UPGRADES', '#cfe8d4'), 196)
+  centered(label('ENTER: AGAIN   ESC: HEROES AND UPGRADES', '#cfe8d4'), 186)
+  return [button('again', 'AGAIN', W / 2 - 66, 200, 60), button('title', 'HEROES', W / 2 + 6, 200, 60)]
+}
+/** A small button with a word on it; returns its box for clicks and taps. */
+function button(id, word, x, y, w, on = false) {
+  draw(panel(w, 16), x, y)
+  if (on) { ctx.strokeStyle = color('#ffd23f'); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 15) }
+  const t = label(word, '#ffffff'); draw(t, x + (w - t.w) / 2, y + (16 - t.h) / 2 + 1)
+  return [id, 0, x, y, w, 16]
 }
 
 export function drawPause(g) {
@@ -272,17 +293,32 @@ export function drawPause(g) {
   centered(label('PAUSED', '#ffffff', 3), 14)
   // your weapons, and what each needs to evolve
   g.weapons.forEach((w, i) => {
-    const y = 44 + i * 19, evo = EVOLUTIONS[w.id]
-    draw(sprite(w.def.icon), 60, y)
-    draw(label(`${w.def.name}  ${w.evo ? 'EVOLVED' : 'LV ' + w.lv}`, w.evo ? '#fff3a0' : '#ffffff'), 80, y + 2)
+    const y = 40 + i * 24, evo = EVOLUTIONS[w.id]
+    draw(sprite(w.def.icon), 44, y)
+    draw(label(`${w.def.name}  ${w.evo ? 'EVOLVED' : 'LV ' + w.lv}`, w.evo ? '#fff3a0' : '#ffffff'), 64, y)
     if (evo && !w.evo) {
       const have = !!g.passives[evo.needs], ready = !!evolutionFor(g, w)
-      draw(label(ready ? 'READY: NEXT LEVEL UP' : `LV 5 + ${PASSIVES[evo.needs].name} = ${evo.def.name}`, ready ? '#7dff8a' : have ? '#fff3a0' : '#8fa39a'), 80, y + 10)
-      draw(sprite(PASSIVES[evo.needs].icon, { grid: 8 }), 68, y + 9)
-    } else draw(label(w.def.desc, '#8fa39a'), 80, y + 10)
+      draw(label(ready ? 'READY: NEXT LEVEL UP' : `LV 5 + ${PASSIVES[evo.needs].name} = ${evo.def.name}`, ready ? '#7dff8a' : have ? '#fff3a0' : '#8fa39a'), 64, y + 11)
+    } else draw(label(w.def.desc, '#8fa39a'), 64, y + 11)
   })
-  Object.entries(g.passives).forEach(([id, lv], i) => { draw(sprite(PASSIVES[id].icon), 262, 44 + i * 19); draw(label(`${PASSIVES[id].name} ${lv}`, '#ffffff'), 282, 46 + i * 19); draw(label(PASSIVES[id].desc, '#8fa39a'), 282, 54 + i * 19) })
-  centered(label('ESC: GO ON   M: SOUND   P: COLORS   Q: QUIT', '#cfe8d4'), 208)
+  Object.entries(g.passives).forEach(([id, lv], i) => { draw(sprite(PASSIVES[id].icon), 262, 40 + i * 24); draw(label(`${PASSIVES[id].name} ${lv}`, '#ffffff'), 282, 40 + i * 24); draw(label(PASSIVES[id].desc, '#8fa39a'), 282, 51 + i * 24) })
+  centered(label('ESC: GO ON   M: SOUND   P: COLORS   Q: QUIT', '#cfe8d4'), 190)
+  return [button('resume', 'GO ON', W / 2 - 66, 204, 60), button('title', 'QUIT', W / 2 + 6, 204, 60)]
+}
+
+/** On a touch screen: the stick under your thumb, a dash button and a pause button. Returns the buttons' boxes. */
+export function drawTouch(g, stick) {
+  if (stick) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(stick.x0, stick.y0, 22, 0, Math.PI * 2); ctx.stroke()
+    const d = Math.hypot(stick.dx, stick.dy) || 1, k = Math.min(1, 22 / d)
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.beginPath(); ctx.arc(stick.x0 + stick.dx * k, stick.y0 + stick.dy * k, 9, 0, Math.PI * 2); ctx.fill()
+  }
+  const bx = W - 32, by = H - 34, ready = g.p.dashCd <= 0
+  ctx.fillStyle = ready ? 'rgba(127,227,255,0.35)' : 'rgba(20,30,40,0.45)'; ctx.beginPath(); ctx.arc(bx, by, 20, 0, Math.PI * 2); ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(bx, by, 20, 0, Math.PI * 2); ctx.stroke()
+  draw(sprite('boots'), bx - 8, by - 8)
+  draw(sprite('pause'), 4, H - 22)
+  return [['dash', 0, bx - 24, by - 24, 48, 48], ['pause', 0, 0, H - 28, 26, 28]]
 }
 
 /** The title: pick a hero, then a stage. Returns the boxes that can be clicked. */
@@ -318,7 +354,8 @@ export function drawTitle(state, now, save) {
   draw(big.w <= W - 294 ? big : label(heroName(h.id), '#ffffff'), 290, big.w <= W - 294 ? 56 : 60) // long names in the small size
   draw(label(h.from, '#8fa39a'), 290, 70)
   draw(sprite(WEAPONS[h.weapon].icon), 290, 80); draw(label(WEAPONS[h.weapon].name, '#ffd23f'), 308, 85)
-  words(h.note, 104).forEach((l, i) => draw(label(l, '#cfe8d4'), 290, 100 + i * 8))
+  const [note, nlh] = para(h.note, 104, '#cfe8d4')
+  note.forEach((l, i) => draw(l, 290, 100 + i * nlh))
   if (hasHero(save, h.id)) draw(label(`HP ${h.hp}  SPEED ${h.speed}`, '#8fa39a'), 290, 118)
   else { draw(sprite('lock', { grid: 8 }), 290, 116); draw(label(`${h.cost} GOLD: ENTER`, save.gold >= h.cost ? '#7dff8a' : '#ff8a7a'), 301, 118) }
   const evo = EVOLUTIONS[h.weapon]
@@ -336,8 +373,12 @@ export function drawTitle(state, now, save) {
   })
   const hint = label(hasHero(save, h.id) ? 'ARROWS: HERO  Q/E: STAGE  T: TALL  ENTER: START' : 'ARROWS: HERO   ENTER: UNLOCK THIS HERO', '#ffffff')
   centered(label('IN A RUN: SPACE DASHES - LEVEL 5 WEAPON + ITS PASSIVE EVOLVES', '#8fa39a'), 141)
-  if (Math.floor(now * 2) % 2 || state.demo) centered(hint, 200)
+  if ((Math.floor(now * 2) % 2 || state.demo) && !state.touch) centered(hint, 200)
   centered(label('EVERY PIXEL AND SOUND IS PIXSPELL CODE', '#6f8f78'), 213)
+  if (state.touch) { // no keys to press: buttons
+    ctx.fillStyle = color('#0b0f14'); ctx.fillRect(0, 194, W, 18)
+    boxes.push(button('tall', state.tall ? 'TALL' : 'CHIBI', W / 2 - 104, 195, 60), button('start', hasHero(save, h.id) ? 'START' : 'UNLOCK', W / 2 - 34, 195, 68, true), button('lang', lang === 'ko' ? 'ENGLISH' : 'KOREAN', W / 2 + 44, 195, 60))
+  }
   return boxes
 }
 
@@ -356,8 +397,8 @@ export function drawShop(save, sel, now, stage = STAGES[0]) {
     if (i === sel) { ctx.strokeStyle = color('#ffd23f'); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1) }
     draw(sprite(up.icon), x + 6, y + 6)
     draw(label(up.name, '#ffffff'), x + 28, y + 5)
-    draw(label(up.desc, '#ffe9b0'), x + 28, y + 14)
-    for (let k = 0; k < up.max; k++) { ctx.fillStyle = color('#3a2f20'); ctx.fillRect(x + 27 + k * 8, y + 20, 7, 5); ctx.fillStyle = color(k < lv ? '#7dff8a' : '#8a7a58'); ctx.fillRect(x + 28 + k * 8, y + 21, 5, 3) }
+    draw(label(up.desc, '#ffe9b0'), x + 28, y + 15)
+    for (let k = 0; k < up.max; k++) { const px = x + w - 8 - (up.max - k) * 8; ctx.fillStyle = color('#3a2f20'); ctx.fillRect(px - 1, y + 17, 7, 5); ctx.fillStyle = color(k < lv ? '#7dff8a' : '#8a7a58'); ctx.fillRect(px, y + 18, 5, 3) }
     const p = label(price == null ? 'MAX' : `${price}`, price == null ? '#cfe8d4' : save.gold >= price ? '#7dff8a' : '#ff8a7a')
     draw(p, x + w - p.w - (price == null ? 8 : 18), y + 6)
     if (price != null) draw(sprite('coin', { grid: 8 }), x + w - 15, y + 4)
@@ -365,5 +406,6 @@ export function drawShop(save, sel, now, stage = STAGES[0]) {
   })
   centered(label(`${save.runs} RUNS   ${save.wins} WON   ${save.kills} DEFEATED`, '#8fa39a'), 196)
   centered(label('ARROWS: CHOOSE   ENTER: BUY   ESC: BACK', '#ffffff'), 208)
+  boxes.push(button('back', 'BACK', 6, 6, 44))
   return boxes
 }

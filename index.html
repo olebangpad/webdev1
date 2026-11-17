@@ -6,6 +6,7 @@
   <title>WORLDFALL · made with PixSpell</title>
   <meta name="description" content="A survivors-like where heroes from around the world hold off a falling horde. Every sprite, effect, sound and song is PixSpell code: no image or audio files.">
   <style>
+    @font-face { font-family: 'DungGeunMo'; src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/DungGeunMo.woff') format('woff'); font-display: swap; }
     :root { --bg: #0b0f14; --ink: #e8f3e4; --muted: #8aa592; --accent: #a8e05a; }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.5 system-ui, sans-serif; }
@@ -17,7 +18,7 @@
 </head>
 <body>
   <canvas id="game" aria-label="WORLDFALL"></canvas>
-  <div class="bar">Move: arrows / WASD or drag · weapons fire by themselves · Esc pause · M sound · P retro colors ·
+  <div class="bar">Move: arrows / WASD or drag · Space: dash · Esc: pause · M: sound · P: retro colors · L: 한국어 / English ·
     every pixel and sound is <a href="https://github.com/olebangpad/pixspell">PixSpell</a> code · <a href="?demo">watch it play itself</a></div>
   <script type="module" src="./src/main.js"></script>
 </body>
