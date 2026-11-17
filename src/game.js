@@ -12,7 +12,7 @@ export function newGame(stage, heroId, { sfx = () => {} } = {}) {
   const hero = HEROES.find((h) => h.id === heroId)
   const g = {
     stage, hero, sfx, t: 0, over: false, won: false, lv: 1, xp: 0, next: xpFor(1), kills: 0, gold: 0, levels: 0, choices: null,
-    p: { x: 0, y: 0, face: [1, 0], dir: 'right', moving: false, hp: hero.hp, inv: 0, hurt: 0 },
+    p: { x: 0, y: 0, face: [1, 0], dir: 'down', moving: false, hp: hero.hp, inv: 0, hurt: 0 },
     stats: { might: 1, armor: 0, maxHp: hero.hp, haste: 0, area: 1, speed: 1, magnet: 1, crit: 0.05, growth: 1, regen: 0 },
     weapons: [], passives: {},
     enemies: [], shots: [], zones: [], fx: [], gems: [], drops: [], numbers: [],
@@ -302,8 +302,9 @@ export function step(g, dt, move) {
     const l = Math.hypot(move[0], move[1]) || 1, sp = g.hero.speed * s.speed
     p.x += (move[0] / l) * sp * dt; p.y += (move[1] / l) * sp * dt
     p.face = [move[0] / l, move[1] / l]
-    const a = Math.atan2(move[1], move[0])
-    p.dir = ['right', 'down-right', 'down', 'down-left', 'left', 'up-left', 'up', 'up-right'][(Math.round(a / (Math.PI / 4)) + 8) % 8]
+    // which way the hero is drawn: the side view whenever it moves sideways at all (diagonals included), so it
+    // always looks where it goes; the front or back view only when it walks almost straight down or up
+    p.dir = Math.abs(move[0]) >= Math.abs(move[1]) * 0.5 ? (move[0] > 0 ? 'right' : 'left') : move[1] > 0 ? 'down' : 'up'
   }
   p.inv = Math.max(0, p.inv - dt)
   p.hurt = Math.max(0, p.hurt - dt)

@@ -124,10 +124,14 @@ function rotated(img, x, y, a, sx = 1) {
 }
 function drawHero(g, now, cx, cy) {
   const spec = { ...heroSpec(g.hero.id), ...(g.tall ? { height: 24 } : {}) }
-  const f = g.p.moving ? walk(spec, g.p.dir) : idle(spec)
+  // standing still keeps the way it was facing: the first walk frame is the standing pose of that view
+  // (facing the camera it breathes with its idle animation instead)
+  const breathing = !g.p.moving && g.p.dir === 'down'
+  const f = breathing ? idle(spec) : walk(spec, g.p.dir)
   if (g.p.inv > 0 && Math.floor(now * 20) % 2) return // blink while you can't be hurt
-  const fr = g.p.hurt > 0 ? white(f, 'hero' + g.hero.id + !!g.tall + g.p.dir + g.p.moving) : f
-  draw(fr[Math.floor(now * (g.p.moving ? f.fps ?? 8 : 3)) % f.length], g.p.x - cx - f.origin[0], g.p.y - cy - f.origin[1])
+  const fr = g.p.hurt > 0 ? white(f, 'hero' + g.hero.id + !!g.tall + g.p.dir + breathing) : f
+  const i = g.p.moving ? Math.floor(now * (f.fps ?? 6)) % f.length : breathing ? Math.floor(now * 3) % f.length : 0
+  draw(fr[i], g.p.x - cx - f.origin[0], g.p.y - cy - f.origin[1])
 }
 
 // ------------------------------------------------------------------ HUD
